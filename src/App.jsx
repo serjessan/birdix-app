@@ -1,0 +1,3365 @@
+import React, { useState, useReducer, useEffect, useMemo, useRef } from "react";
+import {
+  Home,
+  Swords,
+  Layers,
+  Trophy,
+  User,
+  ArrowRight,
+  ArrowLeft,
+  Plus,
+  Eye,
+  EyeOff,
+  Check,
+  X,
+  Flag,
+  Target,
+  Shield,
+  Zap,
+  RefreshCcw,
+  Sparkles,
+  Crown,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Lock,
+  Mail,
+  LogOut,
+  ChevronRight,
+  ChevronLeft,
+  Star,
+  Award,
+  Calendar,
+  Users,
+  Clock,
+  AlertCircle,
+  CircleDot,
+  Hand,
+  Ban,
+  Gauge,
+  Gift,
+  Rewind,
+  CircleSlash,
+  CheckCircle2,
+  Search,
+  Settings,
+  Info,
+} from "lucide-react";
+import { supabase } from "./lib/supabase";
+
+/* =========================================================================
+   BIRDIX · Prototipo frontend
+   Mobile-first · React + Tailwind (clases core) · lucide-react
+   Archivo único · default export · sin props requeridas
+
+   Sistema visual: dirección Pulse + identidad real (verde Birdix #00703a,
+   Open Sans, lockup con golfistas). Documentado en branding/sistema-visual.md
+   ========================================================================= */
+
+/* ---------------------------------------------------------------------------
+   0 · TOKENS DEL SISTEMA VISUAL BIRDIX
+   Cualquier cambio de marca en color o tipografía empieza aquí.
+   --------------------------------------------------------------------------*/
+
+const BX = {
+  // Verde Birdix
+  green: "#00703a",
+  greenDark: "#014F2A",
+  greenLight: "#2D8E5C",
+  greenFill: "#E6F4ED",
+  // Coral (golfistas del lockup)
+  coral: "#D67560",
+  coralDark: "#A8543F",
+  coralFill: "#FBEAE3",
+  // Neutros
+  ink: "#111827",
+  graphite: "#1F2937",
+  slate: "#6B7280",
+  mist: "#9CA3AF",
+  border: "#E5E7EB",
+  surface: "#FFFFFF",
+  bg: "#F9FAFB",
+  bgStrong: "#F3F4F6",
+  // Divisiones (cada una con su color de marca)
+  bronce: "#92400E",
+  plata: "#6B7280",
+  oro: "#CA8A04",
+  platino: "#0E7490",
+  elite: "#7C3AED",
+  leyenda: "#00703a",
+};
+
+// Rutas a los lockups oficiales. Si el proyecto vive en /public,
+// estos paths se resuelven solos. Para Vite / CRA / Next que necesiten
+// import explícito, sustituir por: import logoWordmark from '../branding/logos/...'
+const LOGOS = {
+  isotipo: "/branding/logos/birdix-isotipo-ix.png",
+  wordmarkGreen: "/branding/logos/birdix-wordmark-blanco-sobre-verde.png",
+  wordmarkWhite: "/branding/logos/birdix-wordmark-verde-sobre-blanco.png",
+};
+
+// Inyecta Open Sans desde Fontsource (jsdelivr) la primera vez que monta la app.
+// Idempotente: si ya está cargada, no la duplica.
+const FONT_HREFS = [
+  "https://cdn.jsdelivr.net/npm/@fontsource/open-sans@5.0.0/400.css",
+  "https://cdn.jsdelivr.net/npm/@fontsource/open-sans@5.0.0/600.css",
+  "https://cdn.jsdelivr.net/npm/@fontsource/open-sans@5.0.0/700.css",
+];
+
+const useBirdixFont = () => {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    // Carga Fontsource (jsdelivr) una sola vez.
+    FONT_HREFS.forEach((href) => {
+      if (document.querySelector(`link[href="${href}"]`)) return;
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = href;
+      document.head.appendChild(link);
+    });
+    // Aplica Open Sans a todo el documento para que también afecte a wrappers
+    // que no llevan className/style explícito.
+    const prev = document.body.style.fontFamily;
+    document.body.style.fontFamily = BIRDIX_FONT_STACK;
+    return () => {
+      document.body.style.fontFamily = prev;
+    };
+  }, []);
+};
+
+const BIRDIX_FONT_STACK = `'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif`;
+
+/* ---------------------------------------------------------------------------
+   1 · CAPA DE PERSISTENCIA
+   - Usa window.storage si existe (shared: false)
+   - Fallback a localStorage
+   - Fallback final a memoria (la app nunca se rompe)
+   --------------------------------------------------------------------------*/
+const memoryStore = {};
+const STORAGE_PREFIX = "birdix:";
+
+const storage = {
+  get(key) {
+    try {
+      if (typeof window !== "undefined" && window.storage?.get) {
+        const v = window.storage.get(STORAGE_PREFIX + key, { shared: false });
+        return v ?? null;
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        const v = window.localStorage.getItem(STORAGE_PREFIX + key);
+        return v ? JSON.parse(v) : null;
+      }
+      return memoryStore[key] ?? null;
+    } catch (e) {
+      return memoryStore[key] ?? null;
+    }
+  },
+  set(key, value) {
+    try {
+      memoryStore[key] = value;
+      if (typeof window !== "undefined" && window.storage?.set) {
+        window.storage.set(STORAGE_PREFIX + key, value, { shared: false });
+        return true;
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+        return true;
+      }
+      return true;
+    } catch (e) {
+      memoryStore[key] = value;
+      return false;
+    }
+  },
+  remove(key) {
+    try {
+      delete memoryStore[key];
+      if (typeof window !== "undefined" && window.storage?.remove) {
+        window.storage.remove(STORAGE_PREFIX + key, { shared: false });
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem(STORAGE_PREFIX + key);
+      }
+    } catch (e) { }
+  },
+};
+
+/* ---------------------------------------------------------------------------
+   2 · CONSTANTES DE DOMINIO
+   --------------------------------------------------------------------------*/
+
+const DIVISIONS = [
+  { key: "bronce", name: "Bronce", min: 0, max: 399, ring: "from-amber-700 to-amber-500", text: "text-amber-100" },
+  { key: "plata", name: "Plata", min: 400, max: 799, ring: "from-slate-400 to-slate-200", text: "text-slate-900" },
+  { key: "oro", name: "Oro", min: 800, max: 1199, ring: "from-yellow-500 to-yellow-300", text: "text-yellow-950" },
+  { key: "platino", name: "Platino", min: 1200, max: 1599, ring: "from-cyan-400 to-teal-200", text: "text-cyan-950" },
+  { key: "elite", name: "Élite", min: 1600, max: 1999, ring: "from-fuchsia-500 to-violet-400", text: "text-white" },
+  { key: "leyenda", name: "Leyenda", min: 2000, max: 99999, ring: "from-[#00703a] to-[#2D8E5C]", text: "text-[#014F2A]" },
+];
+
+const getDivision = (points) => {
+  return DIVISIONS.find((d) => points >= d.min && points <= d.max) || DIVISIONS[0];
+};
+
+const getNextDivision = (points) => {
+  const i = DIVISIONS.findIndex((d) => points >= d.min && points <= d.max);
+  return i >= 0 && i < DIVISIONS.length - 1 ? DIVISIONS[i + 1] : null;
+};
+
+const CARDS = [
+  {
+    id: "second-shot",
+    name: "Segundo Golpe",
+    short: "Repites un golpe.",
+    desc: "Justo después de hacer un golpe puedes repetirlo. El segundo cuenta como definitivo, aunque sea peor.",
+    type: "Reacción",
+    icon: RefreshCcw,
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
+  },
+  {
+    id: "block",
+    name: "Bloqueo",
+    short: "Cancelas una carta rival.",
+    desc: "Inmediatamente después de que el rival revele una carta, la anulas. Solo cancela esa carta concreta.",
+    type: "Defensa",
+    icon: CircleSlash,
+    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
+    chip: "bg-[#D67560]",
+  },
+  {
+    id: "shield",
+    name: "Escudo",
+    short: "Te proteges un hoyo.",
+    desc: "Antes de empezar el hoyo. El rival no puede usar cartas contra ti durante todo ese hoyo.",
+    type: "Defensa",
+    icon: Shield,
+    accent: "bg-sky-50 text-sky-700 border-sky-200",
+    chip: "bg-sky-600",
+  },
+  {
+    id: "double",
+    name: "Todo o Nada",
+    short: "Duplicas tus puntos.",
+    desc: "Antes de empezar el hoyo. Duplica tus puntos Stableford netos de ese hoyo.",
+    type: "Ofensiva",
+    icon: Zap,
+    accent: "bg-amber-50 text-amber-700 border-amber-200",
+    chip: "bg-amber-500",
+  },
+  {
+    id: "steal",
+    name: "Roba Punto",
+    short: "Robas 1 punto.",
+    desc: "Antes de empezar el hoyo. Si haces más puntos que el rival en el hoyo, le robas 1 punto.",
+    type: "Ofensiva",
+    icon: Hand,
+    accent: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+    chip: "bg-fuchsia-600",
+  },
+  {
+    id: "safe-hole",
+    name: "Hoyo Seguro",
+    short: "Mínimo 1 punto.",
+    desc: "Antes de empezar el hoyo. Si haces 0 puntos, recibes 1 punto. Si haces más de 0, no añade extra.",
+    type: "Defensa",
+    icon: CheckCircle2,
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
+  },
+  {
+    id: "no-driver",
+    name: "Driver Prohibido",
+    short: "El rival sin driver.",
+    desc: "Antes del golpe de salida del rival. Solo afecta a su primer golpe del hoyo.",
+    type: "Sabotaje",
+    icon: Ban,
+    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
+    chip: "bg-[#D67560]",
+  },
+  {
+    id: "no-club",
+    name: "Palo Prohibido",
+    short: "Eliges un palo prohibido.",
+    desc: "Antes de empezar el hoyo. No puedes prohibir el putter. Dura solo un hoyo.",
+    type: "Sabotaje",
+    icon: Ban,
+    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
+    chip: "bg-[#D67560]",
+  },
+  {
+    id: "clean-point",
+    name: "Punto Limpio",
+    short: "+1 si juegas limpio.",
+    desc: "Antes de empezar el hoyo. +1 punto si completas el hoyo sin penalización oficial.",
+    type: "Ofensiva",
+    icon: Target,
+    accent: "bg-lime-50 text-lime-700 border-lime-200",
+    chip: "bg-lime-600",
+  },
+  {
+    id: "pressure",
+    name: "Bajo Presión",
+    short: "Castigas el bogey.",
+    desc: "Antes de empezar el hoyo. Si el rival hace bogey o peor, pierde 1 punto. Si hace par o mejor, no hace efecto.",
+    type: "Sabotaje",
+    icon: Gauge,
+    accent: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+    chip: "bg-fuchsia-600",
+  },
+  {
+    id: "birdix-prize",
+    name: "Premio Birdix",
+    short: "Bonus por birdie.",
+    desc: "Antes de empezar el hoyo. +2 si haces birdie. +3 si haces eagle o mejor.",
+    type: "Ofensiva",
+    icon: Gift,
+    accent: "bg-amber-50 text-amber-700 border-amber-200",
+    chip: "bg-amber-500",
+  },
+  {
+    id: "comeback",
+    name: "Remontada",
+    short: "+2 si remontas.",
+    desc: "Antes de empezar el hoyo. Solo si vas por detrás en el total y superas al rival en ese hoyo: +2 puntos.",
+    type: "Ofensiva",
+    icon: Rewind,
+    accent: "bg-violet-50 text-violet-700 border-violet-200",
+    chip: "bg-violet-600",
+  },
+];
+
+const FAKE_RIVALS = [
+  { id: "r1", name: "Carlos Mendoza", hcp: 9, birdixHcp: 9, club: "Real Club La Moraleja", rank: 1342, division: "platino", avatar: "CM" },
+  { id: "r2", name: "Marta Riera", hcp: 14, birdixHcp: 14, club: "Sotogrande", rank: 1180, division: "platino", avatar: "MR" },
+  { id: "r3", name: "Diego Vela", hcp: 6, birdixHcp: 6, club: "Valderrama", rank: 1820, division: "elite", avatar: "DV" },
+  { id: "r4", name: "Laura Pinto", hcp: 22, birdixHcp: 22, club: "El Saler", rank: 640, division: "plata", avatar: "LP" },
+  { id: "r5", name: "Iván Castro", hcp: 11, birdixHcp: 11, club: "PGA Catalunya", rank: 980, division: "oro", avatar: "IC" },
+  { id: "r6", name: "Nuria Almansa", hcp: 17, birdixHcp: 17, club: "La Reserva", rank: 720, division: "plata", avatar: "NA" },
+];
+
+const FAKE_TOP = [
+  { name: "Diego Vela", points: 2140, change: 1 },
+  { name: "Andrea Sanz", points: 2080, change: -1 },
+  { name: "Pablo Reyes", points: 2010, change: 2 },
+  { name: "Carla Estévez", points: 1955, change: 0 },
+  { name: "Hugo Mateo", points: 1900, change: -2 },
+];
+
+const COURSES = [
+  {
+    id: "zarapicos",
+    name: "Golf de Salamanca – Zarapicos",
+    location: "Zarapicos, Salamanca",
+    scorecardStatus: "verified",
+    holes: [
+      { hole: 1, par: 5, strokeIndex: 7, meters: 490 },
+      { hole: 2, par: 4, strokeIndex: 11, meters: 306 },
+      { hole: 3, par: 4, strokeIndex: 1, meters: 411 },
+      { hole: 4, par: 3, strokeIndex: 17, meters: 156 },
+      { hole: 5, par: 5, strokeIndex: 15, meters: 451 },
+      { hole: 6, par: 4, strokeIndex: 9, meters: 374 },
+      { hole: 7, par: 4, strokeIndex: 5, meters: 366 },
+      { hole: 8, par: 3, strokeIndex: 13, meters: 181 },
+      { hole: 9, par: 4, strokeIndex: 3, meters: 377 },
+      { hole: 10, par: 4, strokeIndex: 10, meters: 349 },
+      { hole: 11, par: 5, strokeIndex: 6, meters: 496 },
+      { hole: 12, par: 4, strokeIndex: 8, meters: 372 },
+      { hole: 13, par: 3, strokeIndex: 4, meters: 200 },
+      { hole: 14, par: 4, strokeIndex: 14, meters: 370 },
+      { hole: 15, par: 4, strokeIndex: 12, meters: 349 },
+      { hole: 16, par: 4, strokeIndex: 16, meters: 325 },
+      { hole: 17, par: 3, strokeIndex: 18, meters: 136 },
+      { hole: 18, par: 5, strokeIndex: 2, meters: 521 },
+    ],
+  },
+  {
+    id: "valmuza",
+    name: "La Valmuza Golf",
+    location: "Salamanca",
+    scorecardStatus: "pending",
+    holes: [],
+  },
+  {
+    id: "villamayor",
+    name: "Salamanca Golf & Country Club – Villamayor",
+    location: "Villamayor, Salamanca",
+    scorecardStatus: "pending",
+    holes: [],
+  },
+];
+
+/* ---------------------------------------------------------------------------
+   3 · HELPERS DE NEGOCIO
+   --------------------------------------------------------------------------*/
+
+const clampNumber = (value, min, max, fallback = min) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+};
+
+const calculateMatchWinner = (playerPoints, rivalPoints) => {
+  if (playerPoints > rivalPoints) return "win";
+  if (playerPoints < rivalPoints) return "loss";
+  return "draw";
+};
+
+const calculateStablefordPoints = (netStrokes, par) => {
+  const diff = netStrokes - par;
+  if (diff <= -3) return 5;
+  if (diff === -2) return 4;
+  if (diff === -1) return 3;
+  if (diff === 0) return 2;
+  if (diff === 1) return 1;
+  return 0;
+};
+
+const hasStrokeInput = (value) =>
+  value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value));
+
+const initialsFromName = (name = "?") =>
+  String(name)
+    .split(" ")
+    .filter(Boolean)
+    .map((x) => x[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "?";
+
+const normalizeHcp = (hcp) => clampNumber(hcp, 0, 54, 0);
+
+const normalizeBirdixHcp = (hcp) => {
+  const n = Number(hcp);
+  const safe = Number.isFinite(n) ? n : 18;
+  return Math.round(Math.min(36, Math.max(0, safe)) * 10) / 10;
+};
+
+const formatBirdixHcp = (hcp) => normalizeBirdixHcp(hcp).toFixed(1);
+
+const getProfileBirdixHcp = (profile) => normalizeBirdixHcp(profile?.birdixHcp ?? profile?.hcp ?? 18);
+
+const getRivalBirdixHcp = (rival) => normalizeBirdixHcp(rival?.birdixHcp ?? rival?.hcp ?? 18);
+
+const isTeamMatch = (match) =>
+  match?.matchType === "2v2" || match?.format === "2 vs 2" || match?.format === "2v2";
+
+const toMatchPlayer = (player, slot, team) => ({
+  id: player?.id || `${team}_${slot}`,
+  slot,
+  team,
+  name: player?.name || "Jugador",
+  avatar: player?.avatar || initialsFromName(player?.name),
+  club: player?.club || "",
+  hcp: normalizeHcp(player?.hcp),
+  birdixHcp: normalizeBirdixHcp(player?.birdixHcp ?? player?.hcp),
+  rank: toRankingPoints(player?.rank ?? player?.ranking ?? 1000),
+  isCurrentUser: Boolean(player?.isCurrentUser),
+});
+
+const buildTeamPlayers = (profile, ranking, draft) => {
+  const currentUser = toMatchPlayer(
+    {
+      id: "me",
+      name: profile?.name || "Tú",
+      avatar: initialsFromName(profile?.name || "Tú"),
+      hcp: profile?.hcp,
+      birdixHcp: getProfileBirdixHcp(profile),
+      rank: ranking,
+      club: profile?.club || "",
+      isCurrentUser: true,
+    },
+    "player",
+    "A"
+  );
+  const teammate = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.teammateId), "teammate", "A");
+  const rival1 = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.rivalId), "rival1", "B");
+  const rival2 = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.rival2Id), "rival2", "B");
+  return [currentUser, teammate, rival1, rival2];
+};
+
+const getTeamPlayers = (match, ranking = 1000, playerBirdixHcp = 18) => {
+  if (Array.isArray(match?.players) && match.players.length >= 4) {
+    return match.players.map((p) =>
+      toMatchPlayer(
+        {
+          ...p,
+          rank: p.isCurrentUser ? ranking : p.rank,
+          birdixHcp: p.isCurrentUser ? p.birdixHcp ?? playerBirdixHcp : p.birdixHcp,
+        },
+        p.slot,
+        p.team
+      )
+    );
+  }
+  const fallback = {
+    teammateId: FAKE_RIVALS[1]?.id,
+    rivalId: match?.rivalId || FAKE_RIVALS[0]?.id,
+    rival2Id: FAKE_RIVALS[2]?.id,
+  };
+  return buildTeamPlayers({ name: "Tú", hcp: playerBirdixHcp, birdixHcp: playerBirdixHcp }, ranking, fallback);
+};
+
+const averageRank = (players) => {
+  const list = Array.isArray(players) ? players : [];
+  if (!list.length) return 1000;
+  return Math.round(list.reduce((sum, p) => sum + toRankingPoints(p.rank), 0) / list.length);
+};
+
+const oppositeResult = (result) => (result === "win" ? "loss" : result === "loss" ? "win" : "draw");
+
+const cardNeedsTarget = (cardId) => ["steal", "pressure", "no_driver", "no_club", "block"].includes(cardId);
+
+const getCourseById = (courseIdOrName, fallback = COURSES[0]) =>
+  COURSES.find((c) => c.id === courseIdOrName || c.name === courseIdOrName) || fallback;
+
+const getCourseHoles = (courseIdOrName, holeCount = 18) => {
+  const course = getCourseById(courseIdOrName, null);
+  const holes = Array.isArray(course?.holes) ? course.holes : [];
+  return holes.slice(0, clampNumber(holeCount, 1, 18, 18));
+};
+
+const hasVerifiedScorecard = (course, holeCount = 18) => {
+  const holes = Array.isArray(course?.holes) ? course.holes : [];
+  return course?.scorecardStatus === "verified" && holes.length >= clampNumber(holeCount, 1, 18, 18);
+};
+
+const toRankingPoints = (points) => Math.max(0, Math.round(Number.isFinite(Number(points)) ? Number(points) : 0));
+
+const strokesForIndex = (hcpDiff, strokeIndex) => {
+  const diff = Math.max(0, Math.round(hcpDiff));
+  const fullRounds = Math.floor(diff / 18);
+  const extra = diff % 18;
+  return fullRounds + (strokeIndex <= extra ? 1 : 0);
+};
+
+const getHandicapStrokesForHole = (playerHcp, rivalHcp, strokeIndex) => {
+  const player = normalizeBirdixHcp(playerHcp);
+  const rival = normalizeBirdixHcp(rivalHcp);
+  if (player === rival) return { player: 0, rival: 0 };
+  if (player > rival) return { player: strokesForIndex(player - rival, strokeIndex), rival: 0 };
+  return { player: 0, rival: strokesForIndex(rival - player, strokeIndex) };
+};
+
+const applyStablefordCardEffect = (card, ctx) => {
+  if (!card) return { delta: 0, rivalDelta: 0, note: null };
+  if (!ctx.playerHasScore) return { delta: 0, rivalDelta: 0, note: `${card.name}: introduce golpes` };
+  switch (card.id) {
+    case "double":
+      return ctx.playerBase > 0
+        ? { delta: ctx.playerBase, rivalDelta: 0, note: "Todo o Nada: puntos x2" }
+        : { delta: 0, rivalDelta: 0, note: "Todo o Nada: sin puntos que duplicar" };
+    case "steal":
+      return ctx.rivalHasScore && ctx.playerBase > ctx.rivalBase
+        ? { delta: 1, rivalDelta: -1, note: "Roba Punto: +1 / rival -1" }
+        : { delta: 0, rivalDelta: 0, note: "Roba Punto: no activa" };
+    case "safe-hole":
+      return ctx.playerBase === 0 ? { delta: 1, rivalDelta: 0, note: "Hoyo Seguro: +1" } : { delta: 0, rivalDelta: 0, note: "Hoyo Seguro: ya sumas" };
+    case "clean-point":
+      return !ctx.hasPenalty ? { delta: 1, rivalDelta: 0, note: "Punto Limpio: +1" } : { delta: 0, rivalDelta: 0, note: "Punto Limpio: con penalización" };
+    case "birdix-prize":
+      if (ctx.playerNetDiff <= -2) return { delta: 3, rivalDelta: 0, note: "Premio Birdix: +3" };
+      if (ctx.playerNetDiff === -1) return { delta: 2, rivalDelta: 0, note: "Premio Birdix: +2" };
+      return { delta: 0, rivalDelta: 0, note: "Premio Birdix: sin birdie neto" };
+    case "comeback":
+      return ctx.rivalHasScore && ctx.isBehind && ctx.playerBase > ctx.rivalBase
+        ? { delta: 2, rivalDelta: 0, note: "Remontada: +2" }
+        : { delta: 0, rivalDelta: 0, note: "Remontada: no activa" };
+    case "pressure":
+      return ctx.rivalHasScore && ctx.rivalNetDiff >= 1
+        ? { delta: 0, rivalDelta: -1, note: "Bajo Presión: rival -1" }
+        : { delta: 0, rivalDelta: 0, note: "Bajo Presión: sin efecto" };
+    default:
+      return { delta: 0, rivalDelta: 0, note: `${card.name}: sin efecto de puntos` };
+  }
+};
+
+const calculateRankingChange = (result, playerRank = 1000, rivalRank = 1000) => {
+  const diff = rivalRank - playerRank;
+  const base = Math.round(15 + diff * 0.015);
+  if (result === "win") return Math.round(Math.max(8, Math.min(40, base)));
+  if (result === "loss") return Math.round(-Math.max(6, Math.min(30, 20 - diff * 0.01)));
+  return Math.round(diff * 0.01);
+};
+
+const calculateBirdixHcpAfterMatch = (profile, matchesWithLatestFirst) => {
+  const current = getProfileBirdixHcp(profile);
+  const latest = matchesWithLatestFirst[0]?.result;
+  if (latest !== "win" && latest !== "loss") return current;
+
+  let streak = 0;
+  for (const match of matchesWithLatestFirst) {
+    if (match.result === latest) streak++;
+    else break;
+  }
+
+  if (streak > 0 && streak % 2 === 0) {
+    return normalizeBirdixHcp(current + (latest === "win" ? -1.5 : 1));
+  }
+  return current;
+};
+
+const formatDate = (d) => {
+  const date = new Date(d);
+  const today = new Date();
+  const yest = new Date();
+  yest.setDate(today.getDate() - 1);
+  const sameDay = (a, b) => a.toDateString() === b.toDateString();
+  if (sameDay(date, today)) return "Hoy";
+  if (sameDay(date, yest)) return "Ayer";
+  return date.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+};
+
+const validateEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || "");
+
+const normalizeFinishedMatch = (match, rankingDelta = 0) => {
+  const safeMatch = match || {};
+  const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
+  const playerPoints = Number.isFinite(Number(safeMatch.playerPoints)) ? Number(safeMatch.playerPoints) : 0;
+  const rivalPoints = Number.isFinite(Number(safeMatch.rivalPoints)) ? Number(safeMatch.rivalPoints) : 0;
+  const result = safeMatch.result || calculateMatchWinner(playerPoints, rivalPoints);
+  const holeScores = Array.isArray(safeMatch.holeScores)
+    ? safeMatch.holeScores
+    : Array.isArray(safeMatch.holes)
+      ? safeMatch.holes
+      : [];
+  const holeCount = Array.isArray(safeMatch.holes) ? safeMatch.holes.length : safeMatch.holes;
+  const course = getCourseById(safeMatch.courseId || safeMatch.course, null);
+  return {
+    ...safeMatch,
+    id: safeMatch.id || "m_" + Date.now(),
+    status: "finished",
+    result,
+    date: safeMatch.date || new Date().toISOString(),
+    format: safeMatch.format || "1 vs 1",
+    holes: clampNumber(holeCount, 1, 18, 9),
+    holeScores,
+    courseId: safeMatch.courseId || course?.id || null,
+    course: safeMatch.course || course?.name || "Campo sin definir",
+    rivalName: safeMatch.rivalName || "Rival",
+    playerBirdixHcp: normalizeBirdixHcp(safeMatch.playerBirdixHcp ?? safeMatch.playerHcp),
+    rivalBirdixHcp: normalizeBirdixHcp(safeMatch.rivalBirdixHcp ?? safeMatch.rivalHcp),
+    rivalRank: Number.isFinite(Number(safeMatch.rivalRank)) ? Number(safeMatch.rivalRank) : 1000,
+    playerPoints,
+    rivalPoints,
+    cardsUsed: Array.isArray(safeMatch.cardsUsed) ? safeMatch.cardsUsed.filter(Boolean) : [],
+    rankingDelta: safeDelta,
+    finishedAt: safeMatch.finishedAt || new Date().toISOString(),
+  };
+};
+
+const getMatchHoleCount = (match) => {
+  const raw = Array.isArray(match?.holes) ? match.holes.length : match?.holes;
+  return clampNumber(raw, 1, 18, 9);
+};
+
+/* ---------------------------------------------------------------------------
+   4 · ESTADO GLOBAL (useReducer)
+   --------------------------------------------------------------------------*/
+
+const initialState = {
+  session: null, // { userId, email }
+  user: null, // { id, name, email }
+  profile: null, // perfil deportivo
+  matches: [], // historial
+  ranking: 1000, // puntos del jugador
+  position: 4287, // posición global simulada
+  selectedCards: [], // cartas elegidas partida activa
+  activeMatch: null, // partida activa
+  hydrated: false,
+};
+
+function reducer(state, action) {
+  switch (action.type) {
+    case "HYDRATE":
+      return {
+        ...state,
+        ...action.payload,
+        profile: action.payload?.profile
+          ? { ...action.payload.profile, birdixHcp: getProfileBirdixHcp(action.payload.profile) }
+          : action.payload?.profile,
+        ranking: toRankingPoints(action.payload?.ranking ?? state.ranking),
+        hydrated: true,
+      };
+    case "LOGIN":
+      return { ...state, session: action.payload.session, user: action.payload.user };
+    case "LOGOUT":
+      return { ...initialState, hydrated: true };
+    case "SET_PROFILE":
+      return { ...state, profile: { ...action.payload, birdixHcp: getProfileBirdixHcp(action.payload) } };
+    case "UPDATE_PROFILE":
+      return { ...state, profile: { ...state.profile, ...action.payload } };
+    case "SET_SELECTED_CARDS":
+      return { ...state, selectedCards: action.payload };
+    case "SET_ACTIVE_MATCH":
+      return { ...state, activeMatch: action.payload };
+    case "FINISH_MATCH": {
+      const { match, rankingDelta } = action.payload || {};
+      if (!match) return { ...state, selectedCards: [], activeMatch: null };
+      const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
+      const finishedMatch = normalizeFinishedMatch(match, safeDelta);
+      const safeRanking = Number.isFinite(Number(state.ranking)) ? Number(state.ranking) : 1000;
+      const safePosition = Number.isFinite(Number(state.position)) ? Number(state.position) : 4287;
+      const safeMatches = Array.isArray(state.matches) ? state.matches : [];
+      const nextMatches = [finishedMatch, ...safeMatches];
+      const newRanking = toRankingPoints(safeRanking + safeDelta);
+      const posDelta = -Math.round(safeDelta * 3.2);
+      const nextProfile = state.profile
+        ? { ...state.profile, birdixHcp: calculateBirdixHcpAfterMatch(state.profile, nextMatches) }
+        : state.profile;
+      return {
+        ...state,
+        profile: nextProfile,
+        matches: nextMatches,
+        ranking: newRanking,
+        position: Math.max(1, safePosition + posDelta),
+        selectedCards: [],
+        activeMatch: null,
+      };
+    }
+    default:
+      return state;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   5 · COMPONENTES PEQUEÑOS
+   --------------------------------------------------------------------------*/
+
+/* Componente unificado para los tres lockups oficiales de Birdix.
+   Si el PNG no se resuelve (entorno sin assets), cae a un fallback tipográfico
+   con "BIRDiX" en Open Sans 800 + el verde Birdix oficial. */
+const BirdixLogo = ({ variant = "wordmark-white", height = 48, alt = "Birdix" }) => {
+  const [failed, setFailed] = useState(false);
+  const src =
+    variant === "isotipo" ? LOGOS.isotipo :
+      variant === "wordmark-green" ? LOGOS.wordmarkGreen :
+        LOGOS.wordmarkWhite;
+
+  if (failed) {
+    // Fallback tipográfico: BIRDiX con i minúscula, en verde si la variante es clara
+    const color = variant === "wordmark-green" ? "#FFFFFF" : BX.green;
+    const isIsotipo = variant === "isotipo";
+    return (
+      <div
+        style={{
+          height,
+          minWidth: isIsotipo ? height : undefined,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: variant === "wordmark-green" || variant === "isotipo" ? BX.green : "transparent",
+          color,
+          borderRadius: isIsotipo ? 16 : 0,
+          padding: isIsotipo ? 0 : "0 8px",
+          fontFamily: BIRDIX_FONT_STACK,
+          fontWeight: 800,
+          fontSize: isIsotipo ? height * 0.42 : height * 0.55,
+          letterSpacing: "-0.02em",
+        }}
+        aria-label={alt}
+      >
+        {isIsotipo ? "iX" : (<>BIRD<span>i</span>X</>)}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => setFailed(true)}
+      style={{ height, width: "auto", display: "block" }}
+    />
+  );
+};
+
+/* Wrapper de compatibilidad: las llamadas antiguas a <Logo /> siguen funcionando.
+   Por defecto muestra el wordmark verde sobre blanco. */
+const Logo = ({ size = "md", subtitle = false }) => {
+  const heights = { sm: 28, md: 44, lg: 64 };
+  return (
+    <div className="flex items-center gap-3" style={{ fontFamily: BIRDIX_FONT_STACK }}>
+      <BirdixLogo variant="wordmark-white" height={heights[size]} />
+      {subtitle && (
+        <span style={{ fontSize: 11, letterSpacing: "0.18em", color: BX.green, fontWeight: 600, textTransform: "uppercase" }}>
+          Golf · Competitivo
+        </span>
+      )}
+    </div>
+  );
+};
+
+const DivisionBadge = ({ points, compact = false }) => {
+  const d = getDivision(points);
+  return (
+    <div className={`inline-flex items-center gap-2 rounded-full bg-gradient-to-r ${d.ring} ${d.text} ${compact ? "px-2.5 py-1 text-[11px]" : "px-3.5 py-1.5 text-xs"} font-bold shadow-sm`}>
+      <Crown size={compact ? 12 : 14} strokeWidth={2.5} />
+      {d.name}
+    </div>
+  );
+};
+
+const Pill = ({ children, tone = "slate", icon: Icon }) => {
+  const tones = {
+    slate: "bg-slate-100 text-slate-700",
+    emerald: "bg-[#E6F4ED] text-[#014F2A]",
+    amber: "bg-amber-100 text-amber-800",
+    rose: "bg-[#FBEAE3] text-[#6B2E1F]",
+    sky: "bg-sky-100 text-sky-800",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full ${tones[tone]} px-2.5 py-1 text-[11px] font-semibold`}>
+      {Icon && <Icon size={12} strokeWidth={2.5} />}
+      {children}
+    </span>
+  );
+};
+
+const PrimaryButton = ({ children, onClick, disabled, icon: Icon, full = true, tone = "emerald" }) => {
+  const tones = {
+    emerald: "bg-[#00703a] hover:bg-[#014F2A] shadow-[#014F2A]/20",
+    dark: "bg-slate-900 hover:bg-black shadow-slate-900/30",
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`${full ? "w-full" : ""} ${tones[tone]} disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl px-5 py-3.5 font-bold text-[15px] shadow-lg flex items-center justify-center gap-2 transition active:scale-[0.98]`}
+    >
+      {Icon && <Icon size={18} strokeWidth={2.5} />}
+      {children}
+    </button>
+  );
+};
+
+const SecondaryButton = ({ children, onClick, icon: Icon, full = true }) => (
+  <button
+    onClick={onClick}
+    className={`${full ? "w-full" : ""} bg-white text-slate-900 ring-1 ring-slate-200 hover:ring-slate-300 rounded-2xl px-5 py-3.5 font-bold text-[15px] flex items-center justify-center gap-2 transition active:scale-[0.98]`}
+  >
+    {Icon && <Icon size={18} strokeWidth={2.5} />}
+    {children}
+  </button>
+);
+
+const Field = ({ label, type = "text", value, onChange, placeholder, error, icon: Icon, right }) => (
+  <label className="block">
+    <span className="block text-[12px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">{label}</span>
+    <div className={`relative rounded-2xl bg-white ring-1 ${error ? "ring-[#D67560]/50" : "ring-slate-200"} focus-within:ring-[#00703a] focus-within:ring-2 transition`}>
+      {Icon && (
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">
+          <Icon size={18} strokeWidth={2} />
+        </span>
+      )}
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full bg-transparent rounded-2xl py-3 ${Icon ? "pl-11" : "pl-4"} ${right ? "pr-12" : "pr-4"} text-[15px] text-slate-900 placeholder:text-slate-400 outline-none`}
+      />
+      {right && <span className="absolute right-3 top-1/2 -translate-y-1/2">{right}</span>}
+    </div>
+    {error && <span className="block text-[12px] text-[#A8543F] mt-1.5 font-medium">{error}</span>}
+  </label>
+);
+
+const SegmentedControl = ({ options, value, onChange }) => (
+  <div className="grid grid-cols-2 bg-slate-100 rounded-2xl p-1">
+    {options.map((o) => (
+      <button
+        key={o.value}
+        onClick={() => !o.disabled && onChange(o.value)}
+        disabled={o.disabled}
+        className={`rounded-xl py-2.5 text-sm font-semibold transition flex items-center justify-center gap-1.5 ${o.disabled
+            ? "text-slate-300 cursor-not-allowed"
+            : value === o.value
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-500"
+          }`}
+      >
+        {o.label}
+        {o.disabled && <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 bg-slate-200 rounded-full px-1.5 py-0.5">Pronto</span>}
+      </button>
+    ))}
+  </div>
+);
+
+const ChoiceGrid = ({ options, value, onChange, columns = 2 }) => (
+  <div className={`grid gap-2.5 ${columns === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+    {options.map((o) => {
+      const active = value === o.value;
+      return (
+        <button
+          key={o.value}
+          onClick={() => !o.disabled && onChange(o.value)}
+          disabled={o.disabled}
+          className={`text-left rounded-2xl px-4 py-3.5 ring-1 transition ${o.disabled
+              ? "bg-slate-50 ring-slate-200 opacity-60 cursor-not-allowed"
+              : active
+                ? "bg-[#E6F4ED] ring-[#00703a] ring-2"
+                : "bg-white ring-slate-200 hover:ring-slate-300"
+            }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className={`font-semibold text-[14px] ${active ? "text-[#014F2A]" : "text-slate-900"}`}>{o.label}</span>
+            {o.disabled ? (
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 bg-slate-200 rounded-full px-2 py-0.5">Próximamente</span>
+            ) : (
+              active && <Check className="text-[#00703a]" size={18} strokeWidth={3} />
+            )}
+          </div>
+          {o.hint && <span className="block text-[12px] text-slate-500 mt-0.5">{o.hint}</span>}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const ProgressBar = ({ value, max = 100, tone = "emerald" }) => {
+  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+  const tones = {
+    emerald: "bg-gradient-to-r from-[#00703a] to-[#00703a]",
+    amber: "bg-gradient-to-r from-amber-400 to-yellow-300",
+  };
+  return (
+    <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+      <div className={`h-full ${tones[tone]} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+};
+
+const EmptyState = ({ icon: Icon = Flag, title, description, action }) => (
+  <div className="flex flex-col items-center text-center py-10 px-6">
+    <div className="h-16 w-16 rounded-3xl bg-[#E6F4ED] flex items-center justify-center mb-4 ring-1 ring-[#E6F4ED]">
+      <Icon className="text-[#00703a]" size={28} strokeWidth={2} />
+    </div>
+    <h3 className="font-bold text-slate-900 text-base">{title}</h3>
+    <p className="text-sm text-slate-500 mt-1 max-w-xs">{description}</p>
+    {action && <div className="mt-5 w-full max-w-xs">{action}</div>}
+  </div>
+);
+
+const Avatar = ({ initials, size = "md", tone = "emerald" }) => {
+  const sizes = { sm: "h-9 w-9 text-xs", md: "h-12 w-12 text-sm", lg: "h-20 w-20 text-2xl" };
+  const tones = {
+    emerald: "from-[#00703a] to-[#014F2A]",
+    slate: "from-slate-700 to-slate-900",
+    amber: "from-amber-400 to-amber-600",
+  };
+  return (
+    <div className={`${sizes[size]} rounded-full bg-gradient-to-br ${tones[tone]} text-white font-bold flex items-center justify-center ring-2 ring-white shadow`}>
+      {initials}
+    </div>
+  );
+};
+
+const SectionTitle = ({ children, action }) => (
+  <div className="flex items-center justify-between mb-3 px-1">
+    <h2 className="font-bold text-slate-900 text-[15px]">{children}</h2>
+    {action}
+  </div>
+);
+
+const Card = ({ children, className = "" }) => (
+  <div className={`bg-white rounded-3xl ring-1 ring-slate-100 shadow-sm ${className}`}>{children}</div>
+);
+
+/* ---------- Birdix card visual ---------- */
+const BirdixCard = ({ card, selected, used, onClick, size = "md", showDesc = false }) => {
+  const Icon = card.icon;
+  const sizes = {
+    sm: "h-32 rounded-2xl",
+    md: "h-44 rounded-3xl",
+    lg: "h-56 rounded-3xl",
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={used}
+      className={`group relative ${sizes[size]} w-full text-left overflow-hidden ring-1 transition-all duration-200 active:scale-[0.985]
+        ${used ? "ring-slate-200 opacity-50 grayscale" : selected ? "ring-[#00703a] ring-[2px] shadow-[0_18px_42px_rgba(1,79,42,0.18)] -translate-y-0.5" : "ring-black/5 shadow-sm hover:-translate-y-0.5 hover:shadow-[0_16px_38px_rgba(15,23,42,0.10)]"}
+        ${card.accent}`}
+    >
+      <div className="absolute inset-0 bg-gradient-to-b from-white/55 via-transparent to-black/[0.03] pointer-events-none" />
+      <div className="absolute inset-0 p-3.5 flex flex-col justify-between">
+        <div className="flex items-start justify-between">
+          <div className={`${card.chip} text-white text-[10px] font-black uppercase tracking-[0.14em] px-2 py-1 rounded-full shadow-sm`}>{card.type}</div>
+          <div className="h-9 w-9 rounded-2xl bg-white/75 backdrop-blur flex items-center justify-center ring-1 ring-black/5 shadow-sm transition-transform duration-200 group-hover:scale-105">
+            <Icon size={18} strokeWidth={2.5} />
+          </div>
+        </div>
+        <div>
+          <h3 className="font-black text-[15px] leading-tight tracking-tight">{card.name}</h3>
+          <p className="text-[11px] font-medium mt-0.5 opacity-80">{card.short}</p>
+          {showDesc && <p className="text-[10px] mt-2 opacity-70 leading-snug">{card.desc}</p>}
+        </div>
+      </div>
+      {selected && (
+        <div className="absolute top-2 right-2 h-7 w-7 rounded-full bg-[#00703a] ring-2 ring-white shadow-lg flex items-center justify-center">
+          <Check className="text-white" size={14} strokeWidth={3} />
+        </div>
+      )}
+      {used && (
+        <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center">
+          <span className="bg-white/90 text-slate-900 text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full">Usada</span>
+        </div>
+      )}
+    </button>
+  );
+};
+
+/* ---------- TabBar ---------- */
+const TABS = [
+  { id: "home", label: "Inicio", icon: Home },
+  { id: "matches", label: "Partidas", icon: Swords },
+  { id: "cards", label: "Cartas", icon: Layers },
+  { id: "ranking", label: "Ranking", icon: Trophy },
+  { id: "profile", label: "Perfil", icon: User },
+];
+
+const TabBar = ({ active, onChange }) => (
+  <nav className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
+    <div className="mx-auto max-w-[900px] px-3 pb-3 pointer-events-auto">
+      <div className="bg-white/90 backdrop-blur-xl rounded-3xl ring-1 ring-slate-200 shadow-xl shadow-slate-900/5 px-1.5 py-1.5">
+        <div className="grid grid-cols-5 gap-1">
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            const isActive = active === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => onChange(t.id)}
+                className={`flex flex-col items-center justify-center gap-1 py-2 rounded-2xl transition ${isActive ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
+                  }`}
+              >
+                <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
+                <span className="text-[10px] font-bold tracking-wide">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  </nav>
+);
+
+/* ---------- Toast ---------- */
+const Toast = ({ message, onDone }) => {
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(onDone, 2400);
+    return () => clearTimeout(t);
+  }, [message, onDone]);
+  if (!message) return null;
+  return (
+    <div className="fixed top-3 inset-x-0 z-50 flex justify-center px-3 pointer-events-none">
+      <div className="bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl text-sm font-semibold flex items-center gap-2">
+        <Sparkles size={16} />
+        {message}
+      </div>
+    </div>
+  );
+};
+
+/* ---------- Loader inline ---------- */
+const LoadingLine = ({ text }) => (
+  <div className="flex items-center justify-center gap-2 py-6 text-slate-500 text-sm font-medium">
+    <div className="h-3 w-3 rounded-full bg-[#00703a] animate-pulse" />
+    {text}
+  </div>
+);
+
+/* ---------------------------------------------------------------------------
+   6 · SCREEN · AUTH (Welcome + Login + Register)
+   --------------------------------------------------------------------------*/
+
+const AuthScreen = ({ onLogin, onRegister }) => {
+  const [mode, setMode] = useState("welcome"); // welcome | login | register
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "", accept: false });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+
+  const submitLogin = async () => {
+    const errs = {};
+    if (!validateEmail(form.email)) errs.email = "Email no válido.";
+    if (!form.password || form.password.length < 4) errs.password = "Contraseña demasiado corta.";
+    if (Object.keys(errs).length) return setErrors(errs);
+    setErrors({});
+    setLoading(true);
+    const { error } = await onLogin({ email: form.email, password: form.password });
+    setLoading(false);
+    if (error) setErrors({ password: error });
+  };
+
+  const submitRegister = async () => {
+    const errs = {};
+    if (!form.name.trim()) errs.name = "Indica tu nombre.";
+    if (!validateEmail(form.email)) errs.email = "Email no válido.";
+    if (!form.password || form.password.length < 6) errs.password = "Mínimo 6 caracteres.";
+    if (form.password !== form.confirm) errs.confirm = "No coincide con la contraseña.";
+    if (!form.accept) errs.accept = "Acepta los términos.";
+    if (Object.keys(errs).length) return setErrors(errs);
+    setErrors({});
+    setLoading(true);
+    const { error } = await onRegister({ name: form.name, email: form.email, password: form.password });
+    setLoading(false);
+    if (error) setErrors({ email: error });
+  };
+
+  if (mode === "welcome") {
+    return (
+      <div className="min-h-screen bg-white flex flex-col">
+        {/* Hero */}
+        <div className="relative flex-1 flex flex-col items-center justify-center px-6 pt-10 overflow-hidden">
+          <div className="absolute -top-32 -right-32 h-80 w-80 rounded-full bg-[#00703a]/15 blur-3xl" />
+          <div className="absolute -bottom-20 -left-20 h-80 w-80 rounded-full bg-lime-200/40 blur-3xl" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <Logo size="lg" />
+            <h1 className="mt-10 text-[34px] leading-[1.05] font-black tracking-tight text-slate-900">
+              Compite.
+              <br />
+              Conecta. <span className="text-[#00703a]">Mejora.</span>
+            </h1>
+            <p className="mt-3 text-slate-500 text-[15px] max-w-xs">El nuevo golf competitivo.</p>
+
+            <div className="mt-10 flex items-center gap-2 flex-wrap justify-center">
+              <Pill icon={Swords} tone="emerald">1 vs 1 · 2 vs 2</Pill>
+              <Pill icon={Layers} tone="amber">12 cartas</Pill>
+              <Pill icon={Trophy} tone="sky">Ranking global</Pill>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 pb-10 pt-6 space-y-3 max-w-[420px] mx-auto w-full">
+          <PrimaryButton onClick={() => setMode("register")} icon={ArrowRight}>Crear cuenta</PrimaryButton>
+          <SecondaryButton onClick={() => setMode("login")}>Iniciar sesión</SecondaryButton>
+          <p className="text-center text-[11px] text-slate-400 pt-2">
+            Al continuar aceptas nuestros Términos y Política de privacidad.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <header className="px-5 pt-6 pb-3 flex items-center justify-between max-w-[420px] mx-auto w-full">
+        <button onClick={() => setMode("welcome")} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
+          <ArrowLeft size={18} />
+        </button>
+        <Logo size="sm" />
+        <div className="w-10" />
+      </header>
+
+      <div className="px-5 flex-1 max-w-[420px] mx-auto w-full">
+        <h1 className="text-[26px] font-black tracking-tight text-slate-900 mt-2">
+          {mode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta Birdix"}
+        </h1>
+        <p className="text-slate-500 text-sm mt-1">
+          {mode === "login" ? "Tu ranking te está esperando." : "Tu perfil competitivo empieza aquí."}
+        </p>
+
+        <div className="mt-7 space-y-3.5">
+          {mode === "register" && (
+            <Field
+              label="Nombre"
+              value={form.name}
+              onChange={(v) => setForm({ ...form, name: v })}
+              placeholder="Tu nombre"
+              icon={User}
+              error={errors.name}
+            />
+          )}
+          <Field
+            label="Email"
+            type="email"
+            value={form.email}
+            onChange={(v) => setForm({ ...form, email: v })}
+            placeholder="tu@email.com"
+            icon={Mail}
+            error={errors.email}
+          />
+          <Field
+            label="Contraseña"
+            type={showPass ? "text" : "password"}
+            value={form.password}
+            onChange={(v) => setForm({ ...form, password: v })}
+            placeholder="••••••••"
+            icon={Lock}
+            error={errors.password}
+            right={
+              <button onClick={() => setShowPass(!showPass)} className="h-8 w-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500">
+                {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            }
+          />
+          {mode === "register" && (
+            <Field
+              label="Confirmar contraseña"
+              type={showPass ? "text" : "password"}
+              value={form.confirm}
+              onChange={(v) => setForm({ ...form, confirm: v })}
+              placeholder="••••••••"
+              icon={Lock}
+              error={errors.confirm}
+            />
+          )}
+
+          {mode === "register" && (
+            <label className="flex items-start gap-3 pt-1">
+              <button
+                onClick={() => setForm({ ...form, accept: !form.accept })}
+                className={`mt-0.5 h-5 w-5 rounded-md flex items-center justify-center ring-1 ${form.accept ? "bg-[#00703a] ring-[#00703a]" : "bg-white ring-slate-300"
+                  }`}
+              >
+                {form.accept && <Check className="text-white" size={14} strokeWidth={3} />}
+              </button>
+              <span className="text-[12px] text-slate-600 leading-snug">
+                Acepto los Términos y la Política de privacidad de Birdix.
+                {errors.accept && <span className="block text-[#A8543F] mt-1 font-medium">{errors.accept}</span>}
+              </span>
+            </label>
+          )}
+
+          {mode === "login" && (
+            <button className="text-[#00703a] text-[13px] font-semibold">¿Has olvidado tu contraseña?</button>
+          )}
+        </div>
+
+        <div className="mt-8 space-y-3">
+          {loading ? (
+            <LoadingLine text={mode === "login" ? "Iniciando sesión…" : "Creando tu cuenta…"} />
+          ) : (
+            <PrimaryButton
+              onClick={mode === "login" ? submitLogin : submitRegister}
+              icon={ArrowRight}
+            >
+              {mode === "login" ? "Entrar" : "Crear cuenta"}
+            </PrimaryButton>
+          )}
+
+          <button
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+            className="w-full text-center text-[13px] text-slate-600"
+          >
+            {mode === "login" ? (
+              <>¿No tienes cuenta? <span className="text-[#00703a] font-bold">Crea una</span></>
+            ) : (
+              <>¿Ya tienes cuenta? <span className="text-[#00703a] font-bold">Inicia sesión</span></>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   7 · SCREEN · ONBOARDING
+   --------------------------------------------------------------------------*/
+
+const OnboardingStepper = ({ user, onDone }) => {
+  // ponytail: pantalla única, solo los 3 datos que Sergio pidió que se
+  // usan de verdad en la app — nombre y apellidos, hándicap, campo
+  // habitual. Formato y duración ya tienen valor por defecto en la
+  // creación de partida (1v1 / 9 hoyos), no hace falta preguntarlos aquí.
+  const [data, setData] = useState({ name: user?.name || "", hcp: "", club: "" });
+
+  const canSubmit = data.name.trim() && data.hcp !== "" && data.club.trim();
+
+  const submit = () => {
+    if (!canSubmit) return;
+    onDone({
+      ...data,
+      hcp: Number(data.hcp),
+      birdixHcp: normalizeBirdixHcp(data.hcp),
+      ranking: 1000,
+      position: 4287,
+      stats: { wins: 0, losses: 0, draws: 0, streak: 0, totalMatches: 0, favCard: null, bestRank: 1000 },
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <header className="px-5 pt-6 pb-3 max-w-[420px] mx-auto w-full" />
+
+      <div className="px-5 flex-1 max-w-[420px] mx-auto w-full pt-2">
+        <h2 className="text-[24px] font-black tracking-tight text-slate-900">Empecemos</h2>
+        <p className="text-slate-500 text-sm mt-1">Para crear tu identidad en Birdix.</p>
+        <div className="mt-6 space-y-3.5">
+          <Field label="Nombre y apellidos" value={data.name} onChange={(v) => setData({ ...data, name: v })} placeholder="Tu nombre completo" />
+          <Field label="Hándicap aproximado" type="number" value={data.hcp} onChange={(v) => setData({ ...data, hcp: v })} placeholder="18" />
+          <Field label="Campo en el que sueles jugar" value={data.club} onChange={(v) => setData({ ...data, club: v })} placeholder="Nombre del club" icon={Flag} />
+        </div>
+      </div>
+
+      <div className="px-5 pb-6 pt-3 max-w-[420px] mx-auto w-full">
+        <PrimaryButton onClick={submit} disabled={!canSubmit} icon={ArrowRight}>
+          Crear mi perfil
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   8 · SCREEN · HOME (Dashboard)
+   --------------------------------------------------------------------------*/
+
+const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, onGoProfile, onFindRival }) => {
+  const displayRanking = toRankingPoints(ranking);
+  const division = getDivision(displayRanking);
+  const nextDiv = getNextDivision(displayRanking);
+  const progress = nextDiv ? ((displayRanking - division.min) / (nextDiv.min - division.min)) * 100 : 100;
+  const last = matches[0];
+  const firstName = profile?.name?.split(" ")[0] || "Jugador";
+
+  return (
+    <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#FBFAF6] px-4 sm:px-6 pt-6 pb-6 space-y-6 transition-colors duration-300">
+      {/* Header personal */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[#00703a] text-[11px] uppercase tracking-[0.18em] font-black">Birdix Clubhouse</p>
+          <h1 className="text-[30px] font-black tracking-tight text-slate-950 leading-tight mt-1">Hola, {firstName}</h1>
+          <p className="text-slate-500 text-[13px] font-semibold mt-1">Tu ronda competitiva empieza aquí.</p>
+        </div>
+        <button onClick={onGoProfile} className="rounded-full active:scale-95 transition-transform duration-150">
+          <Avatar initials={firstName.charAt(0).toUpperCase()} />
+        </button>
+      </div>
+
+      {/* Hero ranking */}
+      <Card className="relative overflow-hidden rounded-[30px] bg-gradient-to-br from-white via-white to-[#F2F7EF] ring-black/5 shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+        <div className="absolute inset-x-0 top-0 h-1 bg-[#00703a]" />
+        <div className="relative p-6">
+          <div className="flex items-center justify-between">
+            <DivisionBadge points={displayRanking} />
+            <Pill tone="slate" icon={TrendingUp}>#{position.toLocaleString("es-ES")}</Pill>
+          </div>
+          <div className="mt-7 flex items-end justify-between gap-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Ranking global</p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-[52px] font-black tracking-tight text-slate-950 leading-none">{displayRanking}</span>
+                <span className="text-slate-500 text-sm font-black uppercase tracking-wider">pts</span>
+              </div>
+            </div>
+            <div className="hidden sm:block text-right">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Formato</p>
+              <p className="text-slate-950 font-black mt-1">{profile?.format === "2v2" ? "2 vs 2" : "1 vs 1"}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl bg-white/80 ring-1 ring-black/5 p-3.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                {nextDiv ? `Hacia ${nextDiv.name}` : "Máxima división"}
+              </span>
+              <span className="text-[11px] font-bold text-slate-900">
+                {nextDiv ? `${nextDiv.min - displayRanking} pts` : "Leyenda"}
+              </span>
+            </div>
+            <ProgressBar value={progress} max={100} />
+          </div>
+        </div>
+      </Card>
+
+      {/* CTAs */}
+      <div className="grid grid-cols-1 gap-3">
+        <button onClick={onCreate} className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.22)] flex items-center justify-between active:scale-[0.985] transition-all duration-200">
+          <span className="flex items-center gap-2 font-black text-[15px]"><Plus size={18} strokeWidth={2.5} />Crear partida</span>
+          <ArrowRight size={18} strokeWidth={2.5} />
+        </button>
+        <button onClick={onFindRival} className="w-full rounded-[24px] bg-white px-5 py-4 text-slate-950 ring-1 ring-black/5 shadow-sm flex items-center justify-between active:scale-[0.985] transition-all duration-200">
+          <span className="flex items-center gap-2 font-black text-[15px]"><Search size={18} strokeWidth={2.5} />Buscar rival</span>
+          <span className="text-[11px] uppercase tracking-wider text-slate-400 font-black">online</span>
+        </button>
+      </div>
+
+      {/* Último resultado */}
+      <div>
+        <SectionTitle>Último resultado</SectionTitle>
+        {last ? (
+          <MatchCard match={last} compact />
+        ) : (
+          <Card className="rounded-[28px] ring-black/5 shadow-sm">
+            <EmptyState
+              icon={Swords}
+              title="Aún no tienes partidas"
+              description="Crea tu primera partida y empieza tu trayectoria en Birdix."
+            />
+          </Card>
+        )}
+      </div>
+
+      {/* Acceso rápido */}
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={onGoCards} className="text-left rounded-[28px] bg-gradient-to-br from-slate-950 to-slate-800 text-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-white/10 active:scale-[0.99] transition-all duration-200">
+          <div className="flex items-center justify-between">
+            <Layers size={22} strokeWidth={2.5} />
+            <ChevronRight size={18} className="opacity-70" />
+          </div>
+          <p className="mt-6 text-[11px] uppercase tracking-wider text-[#6EE7B7] font-semibold">Mi mazo</p>
+          <p className="text-base font-black">12 cartas</p>
+        </button>
+        <button onClick={onGoProfile} className="text-left rounded-[28px] bg-white ring-1 ring-black/5 p-4 shadow-sm active:scale-[0.99] transition-all duration-200">
+          <div className="flex items-center justify-between">
+            <User size={22} strokeWidth={2.5} className="text-slate-700" />
+            <ChevronRight size={18} className="text-slate-400" />
+          </div>
+          <p className="mt-6 text-[11px] uppercase tracking-wider text-[#00703a] font-semibold">Mi perfil</p>
+          <p className="text-base font-black text-slate-900">Estadísticas</p>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   9 · MATCH CARD (para historial y home)
+   --------------------------------------------------------------------------*/
+
+const MatchCard = ({ match, compact = false, onClick }) => {
+  const holeCount = getMatchHoleCount(match);
+  const rankingDelta = Math.round(Number(match.rankingDelta) || 0);
+  const resultTone =
+    match.result === "win"
+      ? { bg: "bg-[#E6F4ED]", border: "ring-[#00703a]/30", chip: "bg-[#00703a] text-white", label: "Victoria" }
+      : match.result === "loss"
+        ? { bg: "bg-[#FBEAE3]", border: "ring-[#D67560]/30", chip: "bg-[#D67560] text-white", label: "Derrota" }
+        : { bg: "bg-slate-50", border: "ring-slate-200", chip: "bg-slate-700 text-white", label: "Empate" };
+
+  return (
+    <button onClick={onClick} className={`w-full text-left ${resultTone.bg} rounded-3xl ring-1 ${resultTone.border} p-4 transition active:scale-[0.99]`}>
+      <div className="flex items-center justify-between">
+        <span className={`${resultTone.chip} text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>{resultTone.label}</span>
+        <span className="text-[12px] text-slate-500 font-semibold">{formatDate(match.date)}</span>
+      </div>
+      <div className="mt-3 flex items-end justify-between">
+        <div>
+          <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">vs</p>
+          <p className="font-bold text-slate-900 text-[15px] leading-tight">{match.rivalName}</p>
+          <p className="text-[12px] text-slate-500 mt-0.5">{match.format} · {holeCount} hoyos · {match.course}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Puntos</p>
+          <p className="font-black text-slate-900 text-[22px] leading-none">
+            {match.playerPoints}<span className="text-slate-400 text-base"> · {match.rivalPoints}</span>
+          </p>
+        </div>
+      </div>
+      {!compact && (
+        <div className="mt-3 pt-3 border-t border-slate-200/70 flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {match.cardsUsed?.slice(0, 3).map((c, i) => {
+              const card = CARDS.find((x) => x.id === c);
+              if (!card) return null;
+              const Icon = card.icon;
+              return (
+                <span key={i} className={`${card.chip} h-6 w-6 rounded-full flex items-center justify-center text-white`}>
+                  <Icon size={12} strokeWidth={2.5} />
+                </span>
+              );
+            })}
+            {match.cardsUsed?.length > 3 && <span className="text-[11px] text-slate-500 font-semibold">+{match.cardsUsed.length - 3}</span>}
+          </div>
+          <div className={`flex items-center gap-1 text-[12px] font-bold ${rankingDelta >= 0 ? "text-[#00703a]" : "text-[#A8543F]"}`}>
+            {rankingDelta >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+            {rankingDelta >= 0 ? "+" : ""}{rankingDelta} pts
+          </div>
+        </div>
+      )}
+    </button>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   10 · SCREEN · MATCHES (lista + creación + partida activa)
+   --------------------------------------------------------------------------*/
+
+const MatchesScreen = ({
+  matches,
+  activeMatch,
+  selectedCards,
+  profile,
+  ranking,
+  onCreateMatch,
+  onSelectCards,
+  onOpenActive,
+}) => {
+  const [view, setView] = useState("list"); // list | create | cards
+  const [draft, setDraft] = useState({
+    format: profile?.format || "1v1",
+    holes: profile?.holes || "9",
+    course: COURSES[0].id,
+    date: new Date().toISOString().slice(0, 10),
+    time: "10:00",
+    teammateId: FAKE_RIVALS[1]?.id || "",
+    rivalId: FAKE_RIVALS[0]?.id || "",
+    rival2Id: FAKE_RIVALS[2]?.id || "",
+    mode: "competitive",
+  });
+  const [cardPicks, setCardPicks] = useState([]);
+  const [cardModal, setCardModal] = useState(null);
+
+  const required = draft.holes === "9" ? 2 : 4;
+  const selectedCardIds = Array.isArray(selectedCards) ? selectedCards : [];
+  const selectedCourse = getCourseById(draft.course);
+  const selectedCourseReady = hasVerifiedScorecard(selectedCourse, Number(draft.holes));
+  const draftIsTeamMatch = draft.format === "2v2";
+  const teamSelectionIds = [draft.teammateId, draft.rivalId, draft.rival2Id].filter(Boolean);
+  const teamSelectionReady = teamSelectionIds.length === 3 && new Set(teamSelectionIds).size === 3;
+  const canContinueToCards = selectedCourseReady && (!draftIsTeamMatch || teamSelectionReady);
+
+  const startCreate = () => {
+    setView("create");
+  };
+
+  const goToCardPick = () => {
+    setCardPicks([]);
+    setView("cards");
+  };
+
+  const confirmMatch = () => {
+    const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
+    const rival2 = FAKE_RIVALS.find((r) => r.id === draft.rival2Id);
+    const course = getCourseById(draft.course);
+    if (!hasVerifiedScorecard(course, Number(draft.holes))) return;
+    if (draftIsTeamMatch && !teamSelectionReady) return;
+    if (!draftIsTeamMatch && !rival) return;
+    const players = draftIsTeamMatch ? buildTeamPlayers(profile, ranking, draft) : [];
+    const teamA = players.filter((p) => p.team === "A");
+    const teamB = players.filter((p) => p.team === "B");
+    const match = {
+      id: "m_" + Date.now(),
+      matchType: draftIsTeamMatch ? "2v2" : "1v1",
+      format: draft.format === "1v1" ? "1 vs 1" : "2 vs 2",
+      holes: Number(draft.holes),
+      courseId: course.id,
+      course: course.name,
+      date: `${draft.date}T${draft.time}:00`,
+      mode: draft.mode,
+      playerHcp: normalizeHcp(profile?.hcp),
+      playerBirdixHcp: getProfileBirdixHcp(profile),
+      rivalId: rival?.id,
+      rivalName: draftIsTeamMatch ? teamB.map((p) => p.name).join(" / ") : rival.name,
+      rivalHcp: rival?.hcp,
+      rivalBirdixHcp: getRivalBirdixHcp(rival),
+      rivalRank: draftIsTeamMatch ? averageRank(teamB) : rival.rank,
+      teammateId: draftIsTeamMatch ? draft.teammateId : null,
+      rival2Id: draftIsTeamMatch ? rival2?.id : null,
+      teams: draftIsTeamMatch
+        ? {
+          A: { name: "Tu equipo", playerIds: teamA.map((p) => p.id) },
+          B: { name: "Equipo rival", playerIds: teamB.map((p) => p.id) },
+        }
+        : null,
+      players,
+      status: "pending",
+      cards: cardPicks,
+    };
+    onCreateMatch(match);
+    onSelectCards(cardPicks);
+    setView("list");
+  };
+
+  const toggleCard = (cardId) => {
+    setCardPicks((curr) => {
+      if (curr.includes(cardId)) return curr.filter((c) => c !== cardId);
+      if (curr.length >= required) return curr;
+      return [...curr, cardId];
+    });
+  };
+
+  const renderPlayerPicker = (label, keyName) => (
+    <div>
+      <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2.5">{label}</span>
+      <div className="space-y-2.5">
+        {FAKE_RIVALS.map((r) => {
+          const active = draft[keyName] === r.id;
+          const disabled = draftIsTeamMatch && !active && [draft.teammateId, draft.rivalId, draft.rival2Id].includes(r.id);
+          return (
+            <button
+              key={r.id}
+              disabled={disabled}
+              onClick={() => setDraft({ ...draft, [keyName]: r.id })}
+              className={`w-full flex items-center gap-3 p-3 rounded-[24px] ring-1 transition-all duration-200 active:scale-[0.99] ${active
+                ? "ring-[#00703a]/40 ring-2 bg-[#E6F4ED] shadow-[0_12px_28px_rgba(1,79,42,0.10)]"
+                : disabled
+                  ? "ring-slate-100 bg-slate-50 opacity-45 cursor-not-allowed"
+                  : "ring-black/5 bg-white hover:ring-[#00703a]/20 hover:shadow-sm"
+                }`}
+            >
+              <Avatar initials={r.avatar} size="md" tone={active ? "emerald" : "slate"} />
+              <div className="text-left flex-1">
+                <p className="font-black text-slate-950 text-[14px] leading-tight">{r.name}</p>
+                <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(getRivalBirdixHcp(r))} · {r.club}</p>
+              </div>
+              <div className="text-right">
+                <DivisionBadge points={r.rank} compact />
+                <p className="text-[11px] text-slate-500 mt-1 font-semibold">{r.rank} pts</p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  /* ----- Vista lista ----- */
+  if (view === "list") {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between">
+          <h1 className="text-[26px] font-black tracking-tight text-slate-900">Partidas</h1>
+          <button onClick={startCreate} className="h-11 w-11 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-lg">
+            <Plus size={20} strokeWidth={2.5} />
+          </button>
+        </div>
+
+        {activeMatch && (
+          <Card className="ring-[#00703a]/30 ring-2">
+            <div className="p-4">
+              <div className="flex items-center justify-between">
+                <Pill tone="emerald" icon={CircleDot}>Partida activa</Pill>
+                <span className="text-[12px] text-slate-500 font-semibold">
+                  {formatDate(activeMatch.date || new Date().toISOString())} · {(activeMatch.date || "").slice(11, 16) || "--:--"}
+                </span>
+              </div>
+              <h3 className="font-black text-slate-900 text-lg mt-2">
+                {isTeamMatch(activeMatch) ? "Tu equipo vs Equipo rival" : `vs ${activeMatch.rivalName || "Rival"}`}
+              </h3>
+              <p className="text-[13px] text-slate-500">{activeMatch.format || "1 vs 1"} · {getMatchHoleCount(activeMatch)} hoyos · {activeMatch.course || "Campo sin definir"}</p>
+              {isTeamMatch(activeMatch) ? (
+                <p className="text-[12px] text-slate-500 mt-1">
+                  {(activeMatch.players || []).filter((p) => p.team === "A").map((p) => p.name).join(" + ")} · vs · {(activeMatch.players || []).filter((p) => p.team === "B").map((p) => p.name).join(" + ")}
+                </p>
+              ) : (
+                <p className="text-[12px] text-slate-500 mt-1">Birdix HCP {formatBirdixHcp(activeMatch.playerBirdixHcp ?? profile?.birdixHcp ?? profile?.hcp)} · Rival {formatBirdixHcp(activeMatch.rivalBirdixHcp ?? activeMatch.rivalHcp)}</p>
+              )}
+              <div className="mt-3 flex items-center gap-1.5">
+                {selectedCardIds.map((id) => {
+                  const c = CARDS.find((x) => x.id === id);
+                  if (!c) return null;
+                  const Icon = c.icon;
+                  return (
+                    <span key={id} className={`${c.chip} text-white text-[11px] font-bold rounded-full px-2.5 py-1 flex items-center gap-1`}>
+                      <Icon size={12} strokeWidth={2.5} />
+                      {c.name}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="mt-4">
+                <PrimaryButton icon={Flag} onClick={onOpenActive}>Jugar ahora</PrimaryButton>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        <div>
+          <SectionTitle>Historial</SectionTitle>
+          {matches.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={Swords}
+                title="Sin partidas en tu historial"
+                description="Crea tu primera partida 1 vs 1 y empieza a sumar puntos al ranking."
+                action={<PrimaryButton onClick={startCreate} icon={Plus}>Crear partida</PrimaryButton>}
+              />
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {matches.map((m) => <MatchCard key={m.id} match={m} />)}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ----- Vista creación ----- */
+  if (view === "create") {
+    const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
+    return (
+      <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#F5FBF7] px-4 sm:px-6 pt-6 pb-6 space-y-5 transition-colors duration-300">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setView("list")} className="h-10 w-10 rounded-full bg-white ring-1 ring-black/5 shadow-sm flex items-center justify-center active:scale-95 transition">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Nueva partida</p>
+            <h1 className="text-[26px] font-black tracking-tight text-slate-950 leading-tight">Configura el duelo</h1>
+          </div>
+        </div>
+
+        <Card className="p-5 space-y-5 rounded-[30px] ring-black/5 shadow-[0_20px_55px_rgba(1,79,42,0.08)]">
+          <div>
+            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Formato</span>
+            <SegmentedControl
+              options={[{ value: "1v1", label: "1 vs 1" }, { value: "2v2", label: "2 vs 2", disabled: true }]}
+              value={draft.format}
+              onChange={(v) => setDraft({ ...draft, format: v })}
+            />
+          </div>
+          <div>
+            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Duración</span>
+            <SegmentedControl
+              options={[{ value: "9", label: "9 hoyos" }, { value: "18", label: "18 hoyos" }]}
+              value={draft.holes}
+              onChange={(v) => setDraft({ ...draft, holes: v })}
+            />
+          </div>
+          <div>
+            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Modo</span>
+            <SegmentedControl
+              options={[{ value: "competitive", label: "Competitiva" }, { value: "friendly", label: "Amistosa" }]}
+              value={draft.mode}
+              onChange={(v) => setDraft({ ...draft, mode: v })}
+            />
+          </div>
+        </Card>
+
+        <Card className="p-5 space-y-4 rounded-[30px] ring-black/5 shadow-sm">
+          <div>
+            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Campo</span>
+            <select
+              value={draft.course}
+              onChange={(e) => setDraft({ ...draft, course: e.target.value })}
+              className="w-full bg-white rounded-[22px] ring-1 ring-black/5 py-3.5 px-4 text-[15px] font-semibold text-slate-950 shadow-sm outline-none focus:ring-[#00703a] focus:ring-2 transition"
+            >
+              {COURSES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}{c.scorecardStatus !== "verified" ? " - Próximamente" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-500 mt-2 font-semibold">
+              {selectedCourse.location} · {selectedCourseReady ? "Tarjeta oficial cargada" : "Pendiente de tarjeta oficial"}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Fecha" type="date" value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} />
+            <Field label="Hora" type="time" value={draft.time} onChange={(v) => setDraft({ ...draft, time: v })} />
+          </div>
+        </Card>
+
+        <Card className="p-5 space-y-5 rounded-[30px] ring-black/5 shadow-sm">
+          {draftIsTeamMatch ? (
+            <>
+              <div className="rounded-[24px] bg-[#E6F4ED] ring-1 ring-[#00703a]/10 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-[#014F2A] font-black">Equipo A</p>
+                <p className="text-[13px] text-[#014F2A] font-bold mt-0.5">Tú + compañero seleccionado</p>
+              </div>
+              {renderPlayerPicker("Compañero", "teammateId")}
+              {renderPlayerPicker("Rival 1", "rivalId")}
+              {renderPlayerPicker("Rival 2", "rival2Id")}
+              {!teamSelectionReady && (
+                <p className="text-[12px] text-[#A8543F] font-semibold">Elige tres jugadores distintos para crear la partida 2 vs 2.</p>
+              )}
+            </>
+          ) : (
+            renderPlayerPicker("Rival", "rivalId")
+          )}
+        </Card>
+
+        <button
+          onClick={goToCardPick}
+          disabled={!canContinueToCards}
+          className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.20)] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between active:scale-[0.985] transition-all duration-200"
+        >
+          <span className="flex items-center gap-2 font-black text-[15px]"><Layers size={18} strokeWidth={2.5} />Elegir cartas ({required})</span>
+          <ArrowRight size={18} strokeWidth={2.5} />
+        </button>
+      </div>
+    );
+  }
+
+  /* ----- Vista selección de cartas ----- */
+  if (view === "cards") {
+    return (
+      <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#FAF8F1] px-4 sm:px-6 pt-6 pb-6 space-y-5 transition-colors duration-300">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setView("create")} className="h-10 w-10 rounded-full bg-white ring-1 ring-black/5 shadow-sm flex items-center justify-center active:scale-95 transition">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Mazo privado</p>
+            <h1 className="text-[26px] font-black tracking-tight text-slate-950 leading-tight">Elige tus cartas</h1>
+            <p className="text-[13px] text-slate-500 font-semibold mt-0.5">Selección secreta · el rival no las verá hasta que las uses.</p>
+          </div>
+        </div>
+
+        <Card className="p-5 rounded-[30px] bg-white/90 ring-black/5 shadow-[0_18px_45px_rgba(120,85,25,0.08)]">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-[11px] uppercase tracking-[0.16em] font-black text-slate-500">Selección</span>
+              <p className="text-[18px] font-black text-slate-950 leading-tight">{cardPicks.length} / {required} cartas</p>
+            </div>
+            <Pill tone="emerald" icon={EyeOff}>Privadas</Pill>
+          </div>
+          <div className="mt-4">
+            <ProgressBar value={cardPicks.length} max={required} />
+          </div>
+        </Card>
+
+        <div className="grid grid-cols-2 gap-3.5">
+          {CARDS.map((c) => (
+            <BirdixCard
+              key={c.id}
+              card={c}
+              selected={cardPicks.includes(c.id)}
+              onClick={() => {
+                if (cardPicks.includes(c.id) || cardPicks.length < required) {
+                  toggleCard(c.id);
+                } else {
+                  setCardModal(c);
+                }
+              }}
+            />
+          ))}
+        </div>
+
+        <button onClick={() => setCardModal(CARDS[0])} className="text-[#00703a] text-[13px] font-black text-center w-full pt-1 active:scale-[0.99] transition">
+          ¿Cómo funcionan las cartas?
+        </button>
+
+        <div className="sticky bottom-24 pt-2">
+          <button
+            onClick={confirmMatch}
+            disabled={cardPicks.length !== required}
+            className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.22)] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between active:scale-[0.985] transition-all duration-200"
+          >
+            <span className="flex items-center gap-2 font-black text-[15px]"><Check size={18} strokeWidth={2.5} />Confirmar partida</span>
+            <ArrowRight size={18} strokeWidth={2.5} />
+          </button>
+        </div>
+
+        {cardModal && <CardModal card={cardModal} onClose={() => setCardModal(null)} />}
+      </div>
+    );
+  }
+};
+
+const CardModal = ({ card, onClose }) => {
+  const Icon = card.icon;
+  return (
+    <div className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-3" onClick={onClose}>
+      <div className="bg-white rounded-3xl max-w-[420px] w-full overflow-hidden ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className={`p-5 ${card.accent}`}>
+          <div className="flex items-start justify-between">
+            <div className={`${card.chip} text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full`}>{card.type}</div>
+            <button onClick={onClose} className="h-9 w-9 rounded-full bg-white/70 backdrop-blur flex items-center justify-center">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="h-14 w-14 rounded-2xl bg-white/70 backdrop-blur flex items-center justify-center ring-1 ring-black/5">
+              <Icon size={28} strokeWidth={2.5} />
+            </div>
+            <div>
+              <h3 className="font-black text-[20px] leading-tight">{card.name}</h3>
+              <p className="text-[12px] opacity-80">{card.short}</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-5">
+          <p className="text-slate-700 text-[14px] leading-relaxed">{card.desc}</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   11 · SCREEN · CARDS (mazo completo)
+   --------------------------------------------------------------------------*/
+
+const CardsScreen = () => {
+  const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("all");
+
+  const filtered = useMemo(() => {
+    if (filter === "all") return CARDS;
+    return CARDS.filter((c) => c.type.toLowerCase() === filter);
+  }, [filter]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-[26px] font-black tracking-tight text-slate-900">Cartas Birdix</h1>
+        <p className="text-[13px] text-slate-500 mt-1">Tu mazo oficial. 12 cartas. Estrategia infinita.</p>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+        {[
+          { v: "all", l: "Todas" },
+          { v: "ofensiva", l: "Ofensiva" },
+          { v: "defensa", l: "Defensa" },
+          { v: "sabotaje", l: "Sabotaje" },
+          { v: "reacción", l: "Reacción" },
+        ].map((f) => (
+          <button
+            key={f.v}
+            onClick={() => setFilter(f.v)}
+            className={`px-3.5 py-1.5 rounded-full text-[12px] font-bold whitespace-nowrap transition ${filter === f.v ? "bg-slate-900 text-white" : "bg-white ring-1 ring-slate-200 text-slate-700"
+              }`}
+          >
+            {f.l}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {filtered.map((c) => (
+          <BirdixCard key={c.id} card={c} onClick={() => setModal(c)} />
+        ))}
+      </div>
+
+      {modal && <CardModal card={modal} onClose={() => setModal(null)} />}
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   12 · SCREEN · RANKING
+   --------------------------------------------------------------------------*/
+
+const RankingScreen = ({ profile, ranking, position }) => {
+  const displayRanking = toRankingPoints(ranking);
+  const division = getDivision(displayRanking);
+  const nextDiv = getNextDivision(displayRanking);
+  const progress = nextDiv ? ((displayRanking - division.min) / (nextDiv.min - division.min)) * 100 : 100;
+  const firstName = profile?.name?.split(" ")[0] || "Tú";
+
+  const playerEntry = { name: profile?.name || "Tú", points: displayRanking, change: 0, you: true };
+  const around = useMemo(() => {
+    const base = [
+      { name: "Sergio Lara", points: displayRanking + 80, change: 1 },
+      { name: "Eva Núñez", points: displayRanking + 35, change: -1 },
+      playerEntry,
+      { name: "Tomás Ruiz", points: Math.max(0, displayRanking - 22), change: 2 },
+      { name: "Clara Gil", points: Math.max(0, displayRanking - 60), change: -3 },
+    ];
+    return base.sort((a, b) => b.points - a.points);
+  }, [displayRanking, profile]);
+
+  return (
+    <div className="space-y-5">
+      <h1 className="text-[26px] font-black tracking-tight text-slate-900">Ranking</h1>
+
+      <Card>
+        <div className={`p-5 bg-gradient-to-br ${division.ring} ${division.text} rounded-3xl`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Crown size={18} strokeWidth={2.5} />
+              <span className="font-bold uppercase tracking-wider text-[12px]">División {division.name}</span>
+            </div>
+            <span className="font-bold text-[12px]">#{position.toLocaleString("es-ES")}</span>
+          </div>
+          <p className="mt-5 text-[44px] font-black leading-none">{displayRanking}</p>
+          <p className="text-[12px] font-semibold opacity-80 mt-1">puntos de ranking</p>
+          {nextDiv && (
+            <div className="mt-5">
+              <div className="flex items-center justify-between mb-1.5 text-[11px] font-bold">
+                <span>Hacia {nextDiv.name}</span>
+                <span>{nextDiv.min - displayRanking} pts</span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-black/15 overflow-hidden">
+                <div className="h-full bg-white rounded-full" style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <div>
+        <SectionTitle>Top jugadores</SectionTitle>
+        <Card className="overflow-hidden">
+          {FAKE_TOP.map((p, i) => (
+            <div key={p.name} className={`flex items-center gap-3 p-3.5 ${i < FAKE_TOP.length - 1 ? "border-b border-slate-100" : ""}`}>
+              <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] ${i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-100 text-slate-700" : i === 2 ? "bg-orange-100 text-orange-700" : "bg-slate-50 text-slate-500"}`}>
+                {i + 1}
+              </div>
+              <Avatar initials={p.name.split(" ").map((x) => x[0]).join("")} size="sm" tone={i === 0 ? "amber" : "slate"} />
+              <div className="flex-1">
+                <p className="font-bold text-slate-900 text-[14px]">{p.name}</p>
+                <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
+              </div>
+              <div className="text-right">
+                <p className="font-black text-slate-900 text-[15px]">{p.points}</p>
+                <span className={`text-[11px] font-bold inline-flex items-center gap-0.5 ${p.change > 0 ? "text-[#00703a]" : p.change < 0 ? "text-[#A8543F]" : "text-slate-500"}`}>
+                  {p.change > 0 ? <TrendingUp size={11} /> : p.change < 0 ? <TrendingDown size={11} /> : <Minus size={11} />}
+                  {Math.abs(p.change)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </Card>
+      </div>
+
+      <div>
+        <SectionTitle>Cerca de ti</SectionTitle>
+        <Card className="overflow-hidden">
+          {around.map((p, i) => (
+            <div key={i} className={`flex items-center gap-3 p-3.5 ${p.you ? "bg-[#E6F4ED]" : ""} ${i < around.length - 1 ? "border-b border-slate-100" : ""}`}>
+              <div className="h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] bg-slate-50 text-slate-500">
+                {position + (i - 2)}
+              </div>
+              <Avatar initials={p.you ? firstName.charAt(0).toUpperCase() : p.name.split(" ").map((x) => x[0]).join("")} size="sm" tone={p.you ? "emerald" : "slate"} />
+              <div className="flex-1">
+                <p className={`font-bold text-[14px] ${p.you ? "text-[#014F2A]" : "text-slate-900"}`}>{p.you ? `${p.name} (tú)` : p.name}</p>
+                <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
+              </div>
+              <p className="font-black text-slate-900 text-[15px]">{p.points}</p>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   13 · SCREEN · PROFILE
+   --------------------------------------------------------------------------*/
+
+const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
+  const displayRanking = toRankingPoints(ranking);
+  const wins = matches.filter((m) => m.result === "win").length;
+  const losses = matches.filter((m) => m.result === "loss").length;
+  const draws = matches.filter((m) => m.result === "draw").length;
+  const total = matches.length;
+  const winRate = total ? Math.round((wins / total) * 100) : 0;
+
+  // racha actual: cuenta seguida de victorias desde el principio
+  let streak = 0;
+  for (const m of matches) {
+    if (m.result === "win") streak++;
+    else break;
+  }
+
+  // Carta más usada
+  const cardCount = {};
+  matches.forEach((m) => m.cardsUsed?.forEach((c) => (cardCount[c] = (cardCount[c] || 0) + 1)));
+  const favCardId = Object.entries(cardCount).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const favCard = favCardId ? CARDS.find((c) => c.id === favCardId) : null;
+
+  const initials = (profile?.name || "?").split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase();
+  const division = getDivision(displayRanking);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h1 className="text-[26px] font-black tracking-tight text-slate-900">Perfil</h1>
+        <button className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
+          <Settings size={18} />
+        </button>
+      </div>
+
+      <Card className="p-5">
+        <div className="flex items-center gap-4">
+          <Avatar initials={initials} size="lg" />
+          <div className="flex-1">
+            <h2 className="font-black text-slate-900 text-xl leading-tight">{profile?.name}</h2>
+            <p className="text-[13px] text-slate-500">{profile?.club}</p>
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+              <DivisionBadge points={displayRanking} compact />
+              <Pill tone="emerald" icon={Flag}>Birdix HCP {formatBirdixHcp(getProfileBirdixHcp(profile))}</Pill>
+              <Pill tone="slate">Inicial {normalizeHcp(profile?.hcp)}</Pill>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-3 gap-2">
+          <div className="bg-slate-50 rounded-2xl p-3 text-center">
+            <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Ranking</p>
+            <p className="font-black text-slate-900 text-lg mt-0.5">{displayRanking}</p>
+          </div>
+          <div className="bg-slate-50 rounded-2xl p-3 text-center">
+            <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Posición</p>
+            <p className="font-black text-slate-900 text-lg mt-0.5">#{position.toLocaleString("es-ES")}</p>
+          </div>
+          <div className="bg-slate-50 rounded-2xl p-3 text-center">
+            <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Racha</p>
+            <p className="font-black text-slate-900 text-lg mt-0.5">{streak}🔥</p>
+          </div>
+        </div>
+      </Card>
+
+      <div>
+        <SectionTitle>Estadísticas</SectionTitle>
+        <Card className="p-4">
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {[
+              { label: "PJ", value: total },
+              { label: "V", value: wins, tone: "text-[#00703a]" },
+              { label: "D", value: losses, tone: "text-[#A8543F]" },
+              { label: "E", value: draws, tone: "text-slate-700" },
+            ].map((s) => (
+              <div key={s.label}>
+                <p className={`font-black text-xl ${s.tone || "text-slate-900"}`}>{s.value}</p>
+                <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{s.label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">% Victoria</span>
+              <span className="font-bold text-slate-900 text-[13px]">{winRate}%</span>
+            </div>
+            <ProgressBar value={winRate} max={100} />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 text-[13px]">
+            <div className="bg-slate-50 rounded-2xl p-3">
+              <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Formato favorito</p>
+              <p className="font-bold text-slate-900 mt-0.5">{profile?.format === "2v2" ? "2 vs 2" : "1 vs 1"}</p>
+            </div>
+            <div className="bg-slate-50 rounded-2xl p-3">
+              <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Mejor racha</p>
+              <p className="font-bold text-slate-900 mt-0.5">{Math.max(streak, 0)} victorias</p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {favCard && (
+        <div>
+          <SectionTitle>Carta más usada</SectionTitle>
+          <BirdixCard card={favCard} size="md" showDesc />
+        </div>
+      )}
+
+      <div>
+        <SectionTitle>Historial reciente</SectionTitle>
+        {matches.length === 0 ? (
+          <Card><EmptyState icon={Swords} title="Sin partidas registradas" description="Tu historial aparecerá aquí." /></Card>
+        ) : (
+          <div className="space-y-3">{matches.slice(0, 5).map((m) => <MatchCard key={m.id} match={m} />)}</div>
+        )}
+      </div>
+
+      <button
+        onClick={onLogout}
+        className="w-full bg-white text-[#A8543F] ring-1 ring-[#D67560]/30 hover:bg-[#FBEAE3] rounded-2xl py-3.5 font-bold text-[15px] flex items-center justify-center gap-2 transition"
+      >
+        <LogOut size={18} strokeWidth={2.5} />
+        Cerrar sesión
+      </button>
+
+      <p className="text-center text-[11px] text-slate-400 pt-2">Birdix · v0.1 prototipo</p>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   14 · SCREEN · STABLEFORD (registrar resultado hoyo por hoyo)
+   --------------------------------------------------------------------------*/
+
+const ScoreInput = ({ label, value, onChange, min = 1, max = 12 }) => {
+  const hasValue = hasStrokeInput(value);
+  const safeValue = hasValue ? clampNumber(value, min, max, min) : "";
+  const stepBase = hasValue ? safeValue : min;
+  return (
+    <div className="flex items-center justify-between bg-slate-50 rounded-2xl px-3 py-2.5 gap-3">
+      <span className="text-[12px] uppercase tracking-wider text-slate-500 font-semibold">{label}</span>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          aria-label={`Reducir ${label}`}
+          onClick={() => onChange(clampNumber(stepBase - 1, min, max, min))}
+          className="h-9 w-9 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center text-slate-700 active:scale-95 transition"
+        >
+          <Minus size={14} strokeWidth={3} />
+        </button>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          value={safeValue}
+          onChange={(e) => onChange(e.target.value === "" ? "" : clampNumber(e.target.value, min, max, stepBase))}
+          className="h-9 w-12 rounded-xl bg-white ring-1 ring-slate-200 text-center font-black text-slate-900 text-lg outline-none focus:ring-2 focus:ring-[#00703a]"
+        />
+        <button
+          type="button"
+          aria-label={`Aumentar ${label}`}
+          onClick={() => onChange(clampNumber(stepBase + 1, min, max, min))}
+          className="h-9 w-9 rounded-full bg-[#00703a] text-white flex items-center justify-center active:scale-95 transition"
+        >
+          <Plus size={14} strokeWidth={3} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFinish, onCancel }) => {
+  const total = getMatchHoleCount(match);
+  const matchCourse = getCourseById(match?.courseId || match?.course, null);
+  const courseReady = hasVerifiedScorecard(matchCourse, total);
+  const courseHoles = courseReady ? getCourseHoles(matchCourse.id, total) : [];
+  const selectedCardIds = Array.isArray(selectedCards) ? selectedCards : [];
+  const players = useMemo(() => getTeamPlayers(match, ranking, playerBirdixHcp), [match, ranking, playerBirdixHcp]);
+  const teamA = useMemo(() => players.filter((p) => p.team === "A"), [players]);
+  const teamB = useMemo(() => players.filter((p) => p.team === "B"), [players]);
+  const currentUser = players.find((p) => p.isCurrentUser) || teamA[0];
+  const defaultTargetId = teamB[0]?.id || "";
+  const [hole, setHole] = useState(0);
+  const [holes, setHoles] = useState(() =>
+    courseReady
+      ? Array.from({ length: total }, (_, i) => {
+        const courseHole = courseHoles[i];
+        return {
+          par: courseHole.par,
+          strokeIndex: courseHole.strokeIndex,
+          meters: courseHole.meters,
+          scores: Object.fromEntries(players.map((p) => [p.id, ""])),
+          cardId: null,
+          cardTargetId: defaultTargetId,
+          penalty: false,
+        };
+      })
+      : []
+  );
+  const [showCardPicker, setShowCardPicker] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+
+  useEffect(() => {
+    setHole((h) => clampNumber(h, 0, total - 1, 0));
+  }, [total]);
+
+  const usedCardIds = holes.map((h, i) => (i === hole ? null : h.cardId)).filter(Boolean);
+
+  const computed = useMemo(() => {
+    const runningByPlayer = Object.fromEntries(players.map((p) => [p.id, 0]));
+    const baselineHcp = players.length ? Math.min(...players.map((p) => normalizeBirdixHcp(p.birdixHcp))) : 0;
+    let runningTeamA = 0;
+    let runningTeamB = 0;
+
+    return holes.map((h, i) => {
+      const par = clampNumber(h.par, 3, 6, 4);
+      const strokeIndex = clampNumber(h.strokeIndex, 1, 18, (courseHoles[i] || {}).strokeIndex || i + 1);
+      const scores = {};
+
+      players.forEach((p) => {
+        const raw = h.scores?.[p.id];
+        const hasScore = hasStrokeInput(raw);
+        const strokes = hasScore ? clampNumber(raw, 1, 12, par) : null;
+        const hcpStroke = strokesForIndex(Math.max(0, normalizeBirdixHcp(p.birdixHcp) - baselineHcp), strokeIndex);
+        const net = hasScore ? strokes - hcpStroke : null;
+        const netDiff = hasScore ? net - par : null;
+        const base = hasScore ? calculateStablefordPoints(net, par) : 0;
+        scores[p.id] = { ...p, hasScore, strokes, hcpStroke, net, netDiff, base, delta: 0, points: base };
+      });
+
+      const card = h.cardId ? CARDS.find((c) => c.id === h.cardId) : null;
+      const self = scores[currentUser?.id];
+      const target = scores[h.cardTargetId] || scores[defaultTargetId];
+      let note = null;
+
+      if (card && self) {
+        if (!self.hasScore) {
+          note = `${card.name}: introduce tus golpes`;
+        } else {
+          switch (card.id) {
+            case "double":
+              self.delta += self.base > 0 ? self.base : 0;
+              note = self.base > 0 ? "Todo o Nada: tus puntos x2" : "Todo o Nada: sin puntos que duplicar";
+              break;
+            case "steal":
+              if (target?.hasScore && self.base > target.base) {
+                self.delta += 1;
+                target.delta -= 1;
+                note = `Roba Punto: +1 / ${target.name} -1`;
+              } else {
+                note = "Roba Punto: no activa";
+              }
+              break;
+            case "safe-hole":
+              self.delta += self.base === 0 ? 1 : 0;
+              note = self.base === 0 ? "Hoyo Seguro: +1" : "Hoyo Seguro: ya sumas";
+              break;
+            case "clean-point":
+              self.delta += h.penalty ? 0 : 1;
+              note = h.penalty ? "Punto Limpio: con penalización" : "Punto Limpio: +1";
+              break;
+            case "birdix-prize":
+              if (self.netDiff <= -2) {
+                self.delta += 3;
+                note = "Premio Birdix: +3";
+              } else if (self.netDiff === -1) {
+                self.delta += 2;
+                note = "Premio Birdix: +2";
+              } else {
+                note = "Premio Birdix: sin birdie neto";
+              }
+              break;
+            case "comeback":
+              if (target?.hasScore && runningTeamA < runningTeamB && self.base > target.base) {
+                self.delta += 2;
+                note = "Remontada: +2";
+              } else {
+                note = "Remontada: no activa";
+              }
+              break;
+            case "pressure":
+              if (target?.hasScore && target.netDiff >= 1) {
+                target.delta -= 1;
+                note = `Bajo Presión: ${target.name} -1`;
+              } else {
+                note = "Bajo Presión: sin efecto";
+              }
+              break;
+            case "no_driver":
+            case "no_club":
+            case "block":
+              note = target ? `${card.name}: objetivo ${target.name}` : `${card.name}: sin objetivo`;
+              break;
+            default:
+              note = `${card.name}: sin efecto de puntos`;
+          }
+        }
+      }
+
+      players.forEach((p) => {
+        scores[p.id].points = Math.max(0, scores[p.id].base + scores[p.id].delta);
+        runningByPlayer[p.id] += scores[p.id].points;
+      });
+
+      const teamAHole = teamA.reduce((sum, p) => sum + (scores[p.id]?.points || 0), 0);
+      const teamBHole = teamB.reduce((sum, p) => sum + (scores[p.id]?.points || 0), 0);
+      runningTeamA += teamAHole;
+      runningTeamB += teamBHole;
+
+      return {
+        par,
+        strokeIndex,
+        scores,
+        note,
+        teamAHole,
+        teamBHole,
+        runningTeamA,
+        runningTeamB,
+        runningByPlayer: { ...runningByPlayer },
+      };
+    });
+  }, [holes, players, teamA, teamB, courseHoles, currentUser?.id, defaultTargetId]);
+
+  const final = computed[computed.length - 1];
+  const teamATotal = final?.runningTeamA || 0;
+  const teamBTotal = final?.runningTeamB || 0;
+
+  if (!courseReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <header className="px-5 pt-5 pb-3 max-w-[900px] mx-auto w-full">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="px-5 flex-1 max-w-[900px] mx-auto w-full flex items-center">
+          <Card className="p-5 w-full">
+            <EmptyState
+              icon={Flag}
+              title="Tarjeta oficial pendiente"
+              description={`${matchCourse?.name || match?.course || "Este campo"} estará disponible cuando tengamos par e índice de dificultad verificados.`}
+              action={<SecondaryButton onClick={onCancel}>Volver a partidas</SecondaryButton>}
+            />
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  const current = holes[hole] || holes[0] || { par: 4, strokeIndex: 1, scores: {}, cardId: null, cardTargetId: defaultTargetId, penalty: false };
+  const cur = computed[hole] || computed[0] || { par: 4, strokeIndex: 1, scores: {}, teamAHole: 0, teamBHole: 0, runningTeamA: 0, runningTeamB: 0, runningByPlayer: {}, note: null };
+
+  const updateHole = (patch) => {
+    setHoles((arr) =>
+      arr.map((h, i) => {
+        if (i !== hole) return h;
+        const next = { ...h, ...patch };
+        const par = clampNumber(next.par, 3, 6, 4);
+        const scores = Object.fromEntries(
+          players.map((p) => {
+            const value = next.scores?.[p.id] ?? "";
+            return [p.id, value === "" ? "" : clampNumber(value, 1, 12, par)];
+          })
+        );
+        return { ...next, par, scores };
+      })
+    );
+  };
+
+  const updatePlayerScore = (playerId, value) => {
+    updateHole({ scores: { ...(current.scores || {}), [playerId]: value } });
+  };
+
+  const finish = () => {
+    if (isFinishing) return;
+    setIsFinishing(true);
+    const result = calculateMatchWinner(teamATotal, teamBTotal);
+    const teamBResult = oppositeResult(result);
+    const teamAAvg = averageRank(teamA);
+    const teamBAvg = averageRank(teamB);
+    const teamADelta = calculateRankingChange(result, teamAAvg, teamBAvg);
+    const teamBDelta = calculateRankingChange(teamBResult, teamBAvg, teamAAvg);
+    const rankedPlayers = players.map((p) => {
+      const playerResult = p.team === "A" ? result : teamBResult;
+      const delta = p.team === "A" ? teamADelta : teamBDelta;
+      return {
+        ...p,
+        totalPoints: final?.runningByPlayer?.[p.id] || 0,
+        result: playerResult,
+        recordDelta: {
+          wins: playerResult === "win" ? 1 : 0,
+          losses: playerResult === "loss" ? 1 : 0,
+          draws: playerResult === "draw" ? 1 : 0,
+        },
+        rankingDelta: delta,
+        rankAfter: toRankingPoints(p.rank + delta),
+        streakAfter: playerResult === "win" ? 1 : 0,
+      };
+    });
+    const finalMatch = {
+      ...match,
+      id: match?.id || "m_" + Date.now(),
+      matchType: "2v2",
+      format: "2 vs 2",
+      holes: total,
+      course: match?.course || "Campo sin definir",
+      date: match?.date || new Date().toISOString(),
+      status: "finished",
+      result,
+      rivalName: teamB.map((p) => p.name).join(" / ") || "Equipo rival",
+      playerPoints: teamATotal,
+      rivalPoints: teamBTotal,
+      teamPoints: { A: teamATotal, B: teamBTotal },
+      teamRankingDelta: { A: teamADelta, B: teamBDelta },
+      players: rankedPlayers,
+      cardsUsed: holes.map((h) => h.cardId).filter(Boolean),
+      rankingDelta: teamADelta,
+      holeScores: holes.map((h, i) => ({ ...h, ...(computed[i] || {}) })),
+      finishedAt: new Date().toISOString(),
+    };
+    onFinish(finalMatch, teamADelta);
+  };
+
+  const selectedCard = current.cardId ? CARDS.find((c) => c.id === current.cardId) : null;
+  const SelectedCardIcon = selectedCard?.icon;
+
+  return (
+    <div className="min-h-screen bg-[#F7FAF7] flex flex-col">
+      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-[#F7FAF7]/95 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center active:scale-95 transition">
+            <X size={18} />
+          </button>
+          <div className="text-center">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida 2 vs 2</p>
+            <p className="font-black text-slate-950 text-[17px] leading-tight mt-0.5">Tu equipo vs Equipo rival</p>
+            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Stableford · Birdix HCP</p>
+          </div>
+          <div className="h-10 w-10" />
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2 items-stretch">
+          <div className="bg-white rounded-[22px] ring-1 ring-[#00703a]/15 shadow-sm p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Equipo A</p>
+            <p className="font-black text-[#00703a] text-2xl leading-none mt-1">{teamATotal}</p>
+            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
+            <p className="text-[10px] text-slate-500 font-semibold mt-1 truncate">{teamA.map((p) => p.name.split(" ")[0]).join(" + ")}</p>
+          </div>
+          <div className="text-center rounded-[22px] bg-slate-950 text-white px-2.5 py-3 shadow-md shadow-slate-900/10">
+            <p className="text-[10px] uppercase tracking-wider text-white/55 font-semibold">Hoyo</p>
+            <p className="font-black text-2xl leading-none mt-1">{hole + 1}<span className="text-sm text-white/45">/{total}</span></p>
+            <p className="text-[10px] text-[#6EE7B7] font-bold mt-1">Index {cur.strokeIndex}</p>
+          </div>
+          <div className="bg-white rounded-[22px] ring-1 ring-[#A8543F]/15 shadow-sm p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Equipo B</p>
+            <p className="font-black text-[#A8543F] text-2xl leading-none mt-1">{teamBTotal}</p>
+            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
+            <p className="text-[10px] text-slate-500 font-semibold mt-1 truncate">{teamB.map((p) => p.name.split(" ")[0]).join(" + ")}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
+        <Card className="p-5 space-y-4 ring-slate-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Tarjeta del hoyo {hole + 1}</span>
+            <div className="flex items-center gap-1.5">
+              <Pill tone="slate" icon={Flag}>Par {current.par}</Pill>
+              <Pill tone="slate">Index {cur.strokeIndex}</Pill>
+            </div>
+          </div>
+
+          <ScoreInput label="Par" value={current.par} onChange={(v) => updateHole({ par: v })} min={3} max={6} />
+
+          <div className="grid grid-cols-1 gap-2">
+            {players.map((p) => {
+              const score = cur.scores?.[p.id] || {};
+              return (
+                <div key={p.id} className={`rounded-[22px] p-3 ring-1 ${p.team === "A" ? "bg-[#E6F4ED]/80 ring-[#00703a]/10" : "bg-[#FBEAE3]/70 ring-[#A8543F]/10"}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="text-[14px] font-black text-slate-950 leading-tight">{p.name}</p>
+                      <p className="text-[11px] text-slate-500 font-semibold">B-HCP {formatBirdixHcp(p.birdixHcp)}</p>
+                    </div>
+                    <Pill tone={score.hcpStroke > 0 ? "emerald" : "slate"}>{score.hcpStroke > 0 ? `Recibe +${score.hcpStroke}` : "Sin golpe"}</Pill>
+                  </div>
+                  <ScoreInput label="Golpes" value={current.scores?.[p.id] ?? ""} onChange={(v) => updatePlayerScore(p.id, v)} />
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => updateHole({ penalty: !current.penalty })}
+            aria-label="Alternar penalización"
+            title="Alternar penalización"
+            className={`w-full flex items-center justify-end rounded-2xl px-3 py-2.5 ring-1 transition ${current.penalty ? "bg-[#FBEAE3] ring-[#D67560]/30" : "bg-slate-50 ring-slate-100"
+              }`}
+          >
+            <span className={`h-5 w-9 rounded-full flex items-center transition ${current.penalty ? "bg-[#D67560] justify-end" : "bg-slate-300 justify-start"} p-0.5`}>
+              <span className="h-4 w-4 rounded-full bg-white" />
+            </span>
+          </button>
+        </Card>
+
+        <Card className="p-5 ring-slate-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Carta del hoyo</span>
+            <button onClick={() => setShowCardPicker(true)} className="rounded-full bg-[#E6F4ED] px-3 py-1.5 text-[#00703a] text-[12px] font-black active:scale-95 transition">{current.cardId ? "Cambiar" : "Elegir"}</button>
+          </div>
+          {selectedCard ? (
+            <div className={`mt-3 ${selectedCard.accent} rounded-[22px] p-3.5 ring-1 ring-black/5`}>
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-2xl bg-white/75 flex items-center justify-center shadow-sm">{SelectedCardIcon && <SelectedCardIcon size={18} strokeWidth={2.5} />}</div>
+                <div className="flex-1">
+                  <p className="font-black text-[15px] leading-tight">{selectedCard.name}</p>
+                  <p className="text-[11px] opacity-80">{selectedCard.short}</p>
+                </div>
+                <button onClick={() => updateHole({ cardId: null, cardTargetId: defaultTargetId })} className="h-8 w-8 rounded-full bg-white/80 shadow-sm flex items-center justify-center active:scale-95 transition"><X size={14} /></button>
+              </div>
+              {cardNeedsTarget(selectedCard.id) && (
+                <label className="block mt-3">
+                  <span className="block text-[10px] uppercase tracking-wider font-bold opacity-70 mb-1">Objetivo</span>
+                  <select
+                    value={current.cardTargetId || defaultTargetId}
+                    onChange={(e) => updateHole({ cardTargetId: e.target.value })}
+                    className="w-full rounded-xl bg-white/80 px-3 py-2 text-[13px] font-bold outline-none"
+                  >
+                    {teamB.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          ) : (
+            <button onClick={() => setShowCardPicker(true)} className="mt-3 w-full rounded-[22px] bg-slate-50 ring-1 ring-slate-100 px-4 py-4 text-left active:scale-[0.99] transition">
+              <p className="text-[13px] font-black text-slate-900">Sin carta seleccionada</p>
+              <p className="text-[12px] text-slate-500 mt-0.5">Disponibles: {Math.max(0, selectedCardIds.length - usedCardIds.length)}</p>
+            </button>
+          )}
+        </Card>
+
+        <Card className="p-5 bg-slate-950 text-white ring-slate-900 shadow-lg shadow-slate-900/10">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-[#6EE7B7] font-black">Stableford equipos</span>
+            <Info size={14} className="opacity-50" />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {[{ label: "Equipo A", players: teamA, total: cur.runningTeamA, tone: "text-[#6EE7B7]" }, { label: "Equipo B", players: teamB, total: cur.runningTeamB, tone: "text-[#F4B2A6]" }].map((team) => (
+              <div key={team.label} className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
+                <p className={`text-[11px] uppercase tracking-wider font-semibold ${team.tone}`}>{team.label}</p>
+                <p className="font-black text-4xl leading-none mt-1">{team.total}</p>
+                <div className="mt-2 space-y-1.5">
+                  {team.players.map((p) => {
+                    const s = cur.scores?.[p.id] || {};
+                    return (
+                      <div key={p.id} className="text-[11px] text-white/65">
+                        <span className="font-bold text-white/85">{p.name.split(" ")[0]}</span> · {s.hasScore ? `${s.points} pts · gross ${s.strokes} · net ${s.net}` : "sin golpes"}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 rounded-2xl bg-white/[0.06] px-3 py-2 text-[12px] text-white/75 font-bold">
+            Hoyo: {cur.teamAHole} - {cur.teamBHole}
+          </div>
+          {cur?.note && (
+            <div className="mt-3 rounded-2xl bg-[#00703a]/20 px-3 py-2 text-[12px] text-[#6EE7B7] font-bold flex items-center gap-1.5">
+              <Sparkles size={12} /> {cur.note}
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-3 ring-slate-200 shadow-sm">
+          <div className="grid grid-cols-9 gap-1 text-center">
+            {holes.slice(0, Math.min(9, total)).map((h, i) => (
+              <button key={i} onClick={() => setHole(i)} className={`rounded-xl py-1.5 transition active:scale-95 ${i === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}>
+                <p className="text-[10px] font-bold">Hoyo</p>
+                <p className="text-[13px] font-black">{i + 1}</p>
+              </button>
+            ))}
+          </div>
+          {total > 9 && (
+            <div className="grid grid-cols-9 gap-1 text-center mt-1">
+              {holes.slice(9).map((h, i) => (
+                <button key={i + 9} onClick={() => setHole(i + 9)} className={`rounded-xl py-1.5 transition active:scale-95 ${i + 9 === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}>
+                  <p className="text-[10px] font-bold">Hoyo</p>
+                  <p className="text-[13px] font-black">{i + 10}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 z-30 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
+        <div className="max-w-[900px] mx-auto px-5 py-3 flex items-center gap-2">
+          <button onClick={() => setHole(Math.max(0, hole - 1))} disabled={hole === 0} className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center disabled:opacity-30 active:scale-95 transition">
+            <ChevronLeft size={20} />
+          </button>
+          {hole < total - 1 ? (
+            <PrimaryButton onClick={() => setHole(hole + 1)} icon={ArrowRight}>Siguiente hoyo</PrimaryButton>
+          ) : (
+            <PrimaryButton onClick={finish} icon={Trophy} tone="dark" disabled={isFinishing}>
+              {isFinishing ? "Guardando…" : "Finalizar partida"}
+            </PrimaryButton>
+          )}
+        </div>
+      </div>
+
+      {showCardPicker && (
+        <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setShowCardPicker(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-[420px] p-4 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black text-slate-900 text-lg">Usar carta en hoyo {hole + 1}</h3>
+              <button onClick={() => setShowCardPicker(false)} className="h-9 w-9 rounded-full bg-slate-100 flex items-center justify-center"><X size={18} /></button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-3">Las cartas las juega el usuario actual. Las ofensivas pueden elegir rival.</p>
+            <div className="grid grid-cols-2 gap-3">
+              {selectedCardIds.map((id) => {
+                const c = CARDS.find((x) => x.id === id);
+                if (!c) return null;
+                const used = usedCardIds.includes(id) && current.cardId !== id;
+                return (
+                  <BirdixCard
+                    key={id}
+                    card={c}
+                    selected={current.cardId === id}
+                    used={used}
+                    onClick={() => {
+                      updateHole({ cardId: id, cardTargetId: cardNeedsTarget(id) ? current.cardTargetId || defaultTargetId : defaultTargetId });
+                      setShowCardPicker(false);
+                    }}
+                    size="sm"
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFinish, onCancel }) => {
+  const total = getMatchHoleCount(match);
+  const rivalName = match?.rivalName || "Rival";
+  const playerMatchHcp = normalizeBirdixHcp(match?.playerBirdixHcp ?? playerBirdixHcp ?? match?.playerHcp);
+  const rivalMatchHcp = normalizeBirdixHcp(match?.rivalBirdixHcp ?? match?.rivalHcp);
+  const matchCourse = getCourseById(match?.courseId || match?.course, null);
+  const courseReady = hasVerifiedScorecard(matchCourse, total);
+  const courseHoles = courseReady ? getCourseHoles(matchCourse.id, total) : [];
+  const selectedCardIds = Array.isArray(selectedCards) ? selectedCards : [];
+  const [hole, setHole] = useState(0);
+  const [holes, setHoles] = useState(() =>
+    courseReady
+      ? Array.from({ length: total }, (_, i) => {
+        const courseHole = courseHoles[i];
+        return {
+          par: courseHole.par,
+          strokeIndex: courseHole.strokeIndex,
+          meters: courseHole.meters,
+          strokes: "",
+          rivalStrokes: "",
+          cardId: null,
+          penalty: false,
+        };
+      })
+      : []
+  );
+  const [showCardPicker, setShowCardPicker] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+
+  useEffect(() => {
+    setHole((h) => clampNumber(h, 0, total - 1, 0));
+  }, [total]);
+
+  const usedCardIds = holes.map((h, i) => (i === hole ? null : h.cardId)).filter(Boolean);
+
+  // Puntos Stableford calculados por hoyo con golpes recibidos por Birdix HCP.
+  const computed = useMemo(() => {
+    let runningPlayer = 0;
+    let runningRival = 0;
+    const rows = holes.map((h, i) => {
+      const par = clampNumber(h.par, 3, 6, 4);
+      const strokeIndex = clampNumber(h.strokeIndex, 1, 18, (courseHoles[i] || {}).strokeIndex || i + 1);
+      const playerHasScore = hasStrokeInput(h.strokes);
+      const rivalHasScore = hasStrokeInput(h.rivalStrokes);
+      const strokes = playerHasScore ? clampNumber(h.strokes, 1, 12, par) : null;
+      const rivalStrokes = rivalHasScore ? clampNumber(h.rivalStrokes, 1, 12, par) : null;
+      const hcpStrokes = getHandicapStrokesForHole(playerMatchHcp, rivalMatchHcp, strokeIndex);
+      const playerNet = playerHasScore ? strokes - hcpStrokes.player : null;
+      const rivalNet = rivalHasScore ? rivalStrokes - hcpStrokes.rival : null;
+      const playerNetDiff = playerHasScore ? playerNet - par : null;
+      const rivalNetDiff = rivalHasScore ? rivalNet - par : null;
+      const playerBase = playerHasScore ? calculateStablefordPoints(playerNet, par) : 0;
+      const rivalBase = rivalHasScore ? calculateStablefordPoints(rivalNet, par) : 0;
+      const card = h.cardId ? CARDS.find((c) => c.id === h.cardId) : null;
+      const fx = applyStablefordCardEffect(card, {
+        playerHasScore,
+        rivalHasScore,
+        playerBase,
+        rivalBase,
+        playerNetDiff,
+        rivalNetDiff,
+        hasPenalty: h.penalty,
+        isBehind: runningPlayer < runningRival,
+      });
+      const playerHole = Math.max(0, playerBase + (fx.delta || 0));
+      const rivalHole = Math.max(0, rivalBase + (fx.rivalDelta || 0));
+      runningPlayer += playerHole;
+      runningRival += rivalHole;
+      return {
+        par,
+        strokeIndex,
+        strokes,
+        rivalStrokes,
+        playerHasScore,
+        rivalHasScore,
+        playerHcpStroke: hcpStrokes.player,
+        rivalHcpStroke: hcpStrokes.rival,
+        playerNet,
+        rivalNet,
+        playerNetDiff,
+        rivalNetDiff,
+        playerBase,
+        rivalBase,
+        playerCardDelta: fx.delta || 0,
+        rivalCardDelta: fx.rivalDelta || 0,
+        note: fx.note,
+        playerHole,
+        rivalHole,
+        runningPlayer,
+        runningRival,
+      };
+    });
+    return rows;
+  }, [holes, playerMatchHcp, rivalMatchHcp]);
+
+  const final = computed[computed.length - 1];
+  const playerTotal = final?.runningPlayer || 0;
+  const rivalTotal = final?.runningRival || 0;
+
+  if (!courseReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <header className="px-5 pt-5 pb-3 max-w-[900px] mx-auto w-full">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="px-5 flex-1 max-w-[900px] mx-auto w-full flex items-center">
+          <Card className="p-5 w-full">
+            <EmptyState
+              icon={Flag}
+              title="Tarjeta oficial pendiente"
+              description={`${matchCourse?.name || match?.course || "Este campo"} estará disponible cuando tengamos par e índice de dificultad verificados.`}
+              action={<SecondaryButton onClick={onCancel}>Volver a partidas</SecondaryButton>}
+            />
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  const finish = () => {
+    if (isFinishing) return;
+    setIsFinishing(true);
+    const result = calculateMatchWinner(playerTotal, rivalTotal);
+    const rankingDelta = calculateRankingChange(result, ranking, match?.rivalRank || 1000);
+    const finalMatch = {
+      ...match,
+      id: match?.id || "m_" + Date.now(),
+      format: match?.format || "1 vs 1",
+      holes: total,
+      course: match?.course || "Campo sin definir",
+      date: match?.date || new Date().toISOString(),
+      rivalName,
+      playerHcp: match?.playerHcp ?? playerMatchHcp,
+      rivalHcp: match?.rivalHcp ?? rivalMatchHcp,
+      playerBirdixHcp: playerMatchHcp,
+      rivalBirdixHcp: rivalMatchHcp,
+      rivalRank: match?.rivalRank || 1000,
+      status: "finished",
+      result,
+      playerPoints: playerTotal,
+      rivalPoints: rivalTotal,
+      cardsUsed: holes.map((h) => h.cardId).filter(Boolean),
+      rankingDelta,
+      holeScores: holes.map((h, i) => ({ ...h, ...(computed[i] || {}) })),
+      finishedAt: new Date().toISOString(),
+    };
+    onFinish(finalMatch, rankingDelta);
+  };
+
+  const current = holes[hole] || holes[0] || { par: 4, strokeIndex: 1, strokes: "", rivalStrokes: "", cardId: null, penalty: false };
+  const cur = computed[hole] || computed[0] || { par: 4, strokeIndex: 1, strokes: null, rivalStrokes: null, playerHasScore: false, rivalHasScore: false, playerHcpStroke: 0, rivalHcpStroke: 0, playerNet: null, rivalNet: null, playerBase: 0, rivalBase: 0, playerCardDelta: 0, rivalCardDelta: 0, playerHole: 0, rivalHole: 0, runningPlayer: 0, runningRival: 0 };
+
+  const updateHole = (patch) => {
+    setHoles((arr) =>
+      arr.map((h, i) => {
+        if (i !== hole) return h;
+        const next = { ...h, ...patch };
+        const par = clampNumber(next.par, 3, 6, 4);
+        return {
+          ...next,
+          par,
+          strokes: next.strokes === "" ? "" : clampNumber(next.strokes, 1, 12, par),
+          rivalStrokes: next.rivalStrokes === "" ? "" : clampNumber(next.rivalStrokes, 1, 12, par),
+        };
+      })
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F7FAF7] flex flex-col">
+      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-[#F7FAF7]/95 backdrop-blur">
+        <div className="flex items-center justify-between">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center active:scale-95 transition">
+            <X size={18} />
+          </button>
+          <div className="text-center">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida en curso</p>
+            <p className="font-black text-slate-950 text-[17px] leading-tight mt-0.5">vs {rivalName}</p>
+            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Birdix HCP {formatBirdixHcp(playerMatchHcp)} vs {formatBirdixHcp(rivalMatchHcp)}</p>
+          </div>
+          <div className="h-10 w-10" />
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2 items-stretch">
+          <div className="bg-white rounded-[22px] ring-1 ring-[#00703a]/15 shadow-sm p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Tú</p>
+            <p className="font-black text-[#00703a] text-2xl leading-none mt-1">{playerTotal}</p>
+            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
+            <p className="text-[10px] text-slate-500 font-semibold mt-1">B-HCP {formatBirdixHcp(playerMatchHcp)}</p>
+          </div>
+          <div className="text-center rounded-[22px] bg-slate-950 text-white px-2.5 py-3 shadow-md shadow-slate-900/10">
+            <p className="text-[10px] uppercase tracking-wider text-white/55 font-semibold">Hoyo</p>
+            <p className="font-black text-2xl leading-none mt-1">{hole + 1}<span className="text-sm text-white/45">/{total}</span></p>
+            <p className="text-[10px] text-[#6EE7B7] font-bold mt-1">Index {cur.strokeIndex}</p>
+          </div>
+          <div className="bg-white rounded-[22px] ring-1 ring-[#A8543F]/15 shadow-sm p-3 text-center">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{rivalName.split(" ")[0]}</p>
+            <p className="font-black text-[#A8543F] text-2xl leading-none mt-1">{rivalTotal}</p>
+            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
+            <p className="text-[10px] text-slate-500 font-semibold mt-1">B-HCP {formatBirdixHcp(rivalMatchHcp)}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
+        <Card className="p-5 space-y-4 ring-slate-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Tarjeta del hoyo {hole + 1}</span>
+            <div className="flex items-center gap-1.5">
+              <Pill tone="slate" icon={Flag}>Par {current.par}</Pill>
+              <Pill tone="slate">Index {cur.strokeIndex}</Pill>
+            </div>
+          </div>
+
+          <ScoreInput label="Par" value={current.par} onChange={(v) => updateHole({ par: v })} min={3} max={6} />
+          <ScoreInput label="Tus golpes" value={current.strokes} onChange={(v) => updateHole({ strokes: v })} />
+          <ScoreInput label="Golpes rival" value={current.rivalStrokes} onChange={(v) => updateHole({ rivalStrokes: v })} />
+
+          {(cur.playerHcpStroke > 0 || cur.rivalHcpStroke > 0) && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className={`rounded-2xl px-3 py-2 text-center ring-1 ${cur.playerHcpStroke > 0 ? "bg-[#E6F4ED] text-[#00703a] ring-[#00703a]/10" : "bg-slate-50 text-slate-400 ring-slate-100"}`}>
+                <p className="text-[10px] uppercase tracking-wider font-bold">Tú</p>
+                <p className="text-[12px] font-black">{cur.playerHcpStroke > 0 ? `Recibes +${cur.playerHcpStroke}` : "Sin golpe"}</p>
+              </div>
+              <div className={`rounded-2xl px-3 py-2 text-center ring-1 ${cur.rivalHcpStroke > 0 ? "bg-[#FBEAE3] text-[#A8543F] ring-[#A8543F]/10" : "bg-slate-50 text-slate-400 ring-slate-100"}`}>
+                <p className="text-[10px] uppercase tracking-wider font-bold">Rival</p>
+                <p className="text-[12px] font-black">{cur.rivalHcpStroke > 0 ? `Recibe +${cur.rivalHcpStroke}` : "Sin golpe"}</p>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => updateHole({ penalty: !current.penalty })}
+            className={`w-full flex items-center justify-between rounded-2xl px-3 py-2.5 ring-1 transition ${current.penalty ? "bg-[#FBEAE3] ring-[#D67560]/30" : "bg-slate-50 ring-slate-100"
+              }`}
+          >
+            <span className="text-[12px] uppercase tracking-wider text-slate-500 font-semibold">¿Has tenido penalización?</span>
+            <span className={`h-5 w-9 rounded-full flex items-center transition ${current.penalty ? "bg-[#D67560] justify-end" : "bg-slate-300 justify-start"} p-0.5`}>
+              <span className="h-4 w-4 rounded-full bg-white" />
+            </span>
+          </button>
+        </Card>
+
+        <Card className="p-5 ring-slate-200 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Carta del hoyo</span>
+            <button onClick={() => setShowCardPicker(true)} className="rounded-full bg-[#E6F4ED] px-3 py-1.5 text-[#00703a] text-[12px] font-black active:scale-95 transition">{current.cardId ? "Cambiar" : "Elegir"}</button>
+          </div>
+          {current.cardId ? (
+            (() => {
+              const c = CARDS.find((x) => x.id === current.cardId);
+              if (!c) {
+                return (
+                  <div className="mt-3 rounded-[22px] bg-slate-50 ring-1 ring-slate-100 p-3 flex items-center justify-between">
+                    <p className="text-[12px] text-slate-500 font-semibold">Esta carta ya no está disponible.</p>
+                    <button onClick={() => updateHole({ cardId: null })} className="text-[#00703a] text-[12px] font-bold">Quitar</button>
+                  </div>
+                );
+              }
+              const Icon = c.icon;
+              return (
+                <div className={`mt-3 ${c.accent} rounded-[22px] p-3.5 ring-1 ring-black/5 flex items-center gap-3`}>
+                  <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center"><Icon size={18} strokeWidth={2.5} /></div>
+                  <div className="flex-1">
+                    <p className="font-black text-[15px] leading-tight">{c.name}</p>
+                    <p className="text-[11px] opacity-80">{c.short}</p>
+                  </div>
+                  <button onClick={() => updateHole({ cardId: null })} className="h-8 w-8 rounded-full bg-white/80 shadow-sm flex items-center justify-center active:scale-95 transition"><X size={14} /></button>
+                </div>
+              );
+            })()
+          ) : (
+            <button onClick={() => setShowCardPicker(true)} className="mt-3 w-full rounded-[22px] bg-slate-50 ring-1 ring-slate-100 px-4 py-4 text-left active:scale-[0.99] transition">
+              <p className="text-[13px] font-black text-slate-900">Sin carta seleccionada</p>
+              <p className="text-[12px] text-slate-500 mt-0.5">Disponibles: {Math.max(0, selectedCardIds.length - usedCardIds.length)}</p>
+            </button>
+          )}
+        </Card>
+
+        <Card className="p-5 bg-slate-950 text-white ring-slate-900 shadow-lg shadow-slate-900/10">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-[#6EE7B7] font-black">Stableford neto</span>
+            <Info size={14} className="opacity-50" />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
+              <p className="text-[11px] uppercase tracking-wider text-[#6EE7B7] font-semibold">Tú</p>
+              <p className="font-black text-4xl leading-none mt-1">{cur?.playerHole}</p>
+              <p className="text-[11px] text-white/60 mt-1">
+                {cur.playerHasScore ? `gross ${cur.strokes} · net ${cur.playerNet}${cur.playerHcpStroke ? ` · HCP +${cur.playerHcpStroke}` : ""}` : "Introduce golpes"}
+              </p>
+              <p className="text-[11px] text-white/60 mt-1">
+                {cur.playerHasScore ? `base ${cur.playerBase}${cur.playerCardDelta ? ` · carta ${cur.playerCardDelta >= 0 ? "+" : ""}${cur.playerCardDelta}` : ""}` : "0 pts todavía"}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
+              <p className="text-[11px] uppercase tracking-wider text-[#F4B2A6] font-semibold">Rival</p>
+              <p className="font-black text-4xl leading-none mt-1">{cur?.rivalHole}</p>
+              <p className="text-[11px] text-white/60 mt-1">
+                {cur.rivalHasScore ? `gross ${cur.rivalStrokes} · net ${cur.rivalNet}${cur.rivalHcpStroke ? ` · HCP +${cur.rivalHcpStroke}` : ""}` : "Introduce golpes"}
+              </p>
+              <p className="text-[11px] text-white/60 mt-1">
+                {cur.rivalHasScore ? `base ${cur.rivalBase}${cur.rivalCardDelta ? ` · carta ${cur.rivalCardDelta >= 0 ? "+" : ""}${cur.rivalCardDelta}` : ""}` : "0 pts todavía"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 rounded-2xl bg-white/[0.06] px-3 py-2 text-[12px] text-white/75 font-bold">
+            Puntos Stableford del hoyo: {cur.playerHole} - {cur.rivalHole}
+          </div>
+          {cur?.note && (
+            <div className="mt-3 rounded-2xl bg-[#00703a]/20 px-3 py-2 text-[12px] text-[#6EE7B7] font-bold flex items-center gap-1.5">
+              <Sparkles size={12} /> {cur.note}
+            </div>
+          )}
+        </Card>
+
+        {/* Mini scorecard */}
+        <Card className="p-3 ring-slate-200 shadow-sm">
+          <div className="grid grid-cols-9 gap-1 text-center">
+            {holes.slice(0, Math.min(9, total)).map((h, i) => (
+              <button
+                key={i}
+                onClick={() => setHole(i)}
+                className={`rounded-xl py-1.5 transition active:scale-95 ${i === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}
+              >
+                <p className="text-[10px] font-bold">Hoyo</p>
+                <p className="text-[13px] font-black">{i + 1}</p>
+              </button>
+            ))}
+          </div>
+          {total > 9 && (
+            <div className="grid grid-cols-9 gap-1 text-center mt-1">
+              {holes.slice(9).map((h, i) => (
+                <button
+                  key={i + 9}
+                  onClick={() => setHole(i + 9)}
+                  className={`rounded-xl py-1.5 transition active:scale-95 ${i + 9 === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}
+                >
+                  <p className="text-[10px] font-bold">Hoyo</p>
+                  <p className="text-[13px] font-black">{i + 10}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 z-30 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
+        <div className="max-w-[900px] mx-auto px-5 py-3 flex items-center gap-2">
+          <button
+            onClick={() => setHole(Math.max(0, hole - 1))}
+            disabled={hole === 0}
+            className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center disabled:opacity-30 active:scale-95 transition"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          {hole < total - 1 ? (
+            <PrimaryButton onClick={() => setHole(hole + 1)} icon={ArrowRight}>Siguiente hoyo</PrimaryButton>
+          ) : (
+            <PrimaryButton onClick={finish} icon={Trophy} tone="dark" disabled={isFinishing}>
+              {isFinishing ? "Guardando…" : "Finalizar partida"}
+            </PrimaryButton>
+          )}
+        </div>
+      </div>
+
+      {showCardPicker && (
+        <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setShowCardPicker(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-[420px] p-4 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black text-slate-900 text-lg">Usar carta en hoyo {hole + 1}</h3>
+              <button onClick={() => setShowCardPicker(false)} className="h-9 w-9 rounded-full bg-slate-100 flex items-center justify-center"><X size={18} /></button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-3">Selecciona una de tus cartas disponibles.</p>
+            <div className="grid grid-cols-2 gap-3">
+              {selectedCardIds.map((id) => {
+                const c = CARDS.find((x) => x.id === id);
+                if (!c) return null;
+                const used = usedCardIds.includes(id) && current.cardId !== id;
+                return (
+                  <BirdixCard
+                    key={id}
+                    card={c}
+                    selected={current.cardId === id}
+                    used={used}
+                    onClick={() => {
+                      updateHole({ cardId: id });
+                      setShowCardPicker(false);
+                    }}
+                    size="sm"
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   15 · APP ROOT
+   --------------------------------------------------------------------------*/
+
+export default function BirdixApp() {
+  useBirdixFont();
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [tab, setTab] = useState("home");
+  const [playing, setPlaying] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [bootDone, setBootDone] = useState(false);
+  const finishingRef = useRef(false);
+
+  /* --- Hidratación inicial ---
+     La sesión (quién eres) viene de Supabase Auth, de verdad. El perfil
+     enriquecido (edad, ciudad, preferencias de onboarding...) sigue en
+     local por ahora — todavía no tiene columnas en la tabla `profiles`.
+     ponytail: migrar eso cuando decidamos qué campos nos importan de verdad. */
+  useEffect(() => {
+    let unsub = () => {};
+    (async () => {
+      try {
+        const profile = storage.get("profile");
+        const matches = storage.get("matches") || [];
+        const ranking = storage.get("ranking") ?? 1000;
+        const position = storage.get("position") ?? 4287;
+        const selectedCards = storage.get("selectedCards") || [];
+        const activeMatch = storage.get("activeMatch") || null;
+
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const session = authSession
+          ? { userId: authSession.user.id, email: authSession.user.email, since: Date.parse(authSession.user.created_at) }
+          : null;
+        const user = authSession
+          ? { id: authSession.user.id, email: authSession.user.email, name: profile?.name || authSession.user.email.split("@")[0] }
+          : null;
+
+        dispatch({
+          type: "HYDRATE",
+          payload: { session, user, profile, matches, ranking, position, selectedCards, activeMatch },
+        });
+
+        const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+          if (!newSession) dispatch({ type: "LOGOUT" });
+        });
+        unsub = () => sub.subscription.unsubscribe();
+      } catch (e) {
+        dispatch({ type: "HYDRATE", payload: {} });
+      }
+    })();
+    const t = setTimeout(() => setBootDone(true), 350);
+    return () => {
+      clearTimeout(t);
+      unsub();
+    };
+  }, []);
+
+  /* --- Persistencia --- */
+  useEffect(() => {
+    if (!state.hydrated) return;
+    try {
+      storage.set("session", state.session);
+      storage.set("user", state.user);
+      storage.set("profile", state.profile);
+      storage.set("matches", state.matches);
+      storage.set("ranking", state.ranking);
+      storage.set("position", state.position);
+      storage.set("selectedCards", state.selectedCards);
+      storage.set("activeMatch", state.activeMatch);
+    } catch (e) { }
+  }, [state]);
+
+  /* --- Guard de ciclo de vida de partida --- */
+  useEffect(() => {
+    if (!state.hydrated) return;
+    if (!state.activeMatch && playing) {
+      setPlaying(false);
+    }
+    if (!state.activeMatch && finishingRef.current) {
+      finishingRef.current = false;
+      setTab("home");
+    }
+  }, [state.hydrated, state.activeMatch, playing]);
+
+  /* --- Acciones de auth (Supabase real) --- */
+  const handleLogin = async ({ email, password }) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message === "Invalid login credentials" ? "Email o contraseña incorrectos." : error.message };
+
+    const { data: row } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+    const user = { id: data.user.id, email: data.user.email, name: row?.full_name || email.split("@")[0] };
+    const session = { userId: data.user.id, email: data.user.email, since: Date.now() };
+    const profile = row
+      ? { ...storage.get("profile"), name: row.full_name, hcp: row.birdix_hcp, birdixHcp: row.birdix_hcp, ranking: row.points }
+      : storage.get("profile");
+
+    dispatch({ type: "HYDRATE", payload: { session, user, profile, ranking: row?.points ?? state.ranking } });
+    setToast("Bienvenido de vuelta");
+    return { error: null };
+  };
+
+  const handleRegister = async ({ name, email, password }) => {
+    // El perfil (fila en `profiles`) lo crea un trigger en la base de datos
+    // al insertarse en auth.users — no depende de que haya sesión activa
+    // en el cliente (importante si la confirmación de email está activada).
+    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
+    if (error) return { error: error.message === "User already registered" ? "Ya existe una cuenta con ese email." : error.message };
+
+    if (!data.session) {
+      setToast("Cuenta creada · revisa tu email para confirmarla");
+      return { error: "Te hemos enviado un email de confirmación. Confírmalo y vuelve a iniciar sesión." };
+    }
+
+    const user = { id: data.user.id, email, name };
+    const session = { userId: data.user.id, email, since: Date.now() };
+    dispatch({ type: "LOGIN", payload: { session, user } });
+    setToast("Cuenta creada · vamos al perfil");
+    return { error: null };
+  };
+
+  const handleOnboardingDone = (profile) => {
+    dispatch({ type: "SET_PROFILE", payload: profile });
+    setTab("home");
+    setToast("Perfil listo · ¡a jugar!");
+    // Best-effort: sincroniza lo que sí tiene columna real en Supabase.
+    if (state.user?.id) {
+      supabase
+        .from("profiles")
+        .update({ birdix_hcp: normalizeBirdixHcp(profile.hcp), full_name: profile.name })
+        .eq("id", state.user.id)
+        .then(({ error }) => { if (error) console.error("No se pudo sincronizar el perfil con Supabase:", error); });
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    try {
+      storage.remove("session");
+      storage.remove("user");
+      storage.remove("profile");
+      storage.remove("matches");
+      storage.remove("ranking");
+      storage.remove("position");
+      storage.remove("selectedCards");
+      storage.remove("activeMatch");
+    } catch (e) { }
+    dispatch({ type: "LOGOUT" });
+    setTab("home");
+  };
+
+  const handleCreateMatch = (match) => {
+    dispatch({ type: "SET_ACTIVE_MATCH", payload: match });
+    setToast("Partida preparada");
+  };
+
+  const handleFinishMatch = (match, rankingDelta) => {
+    const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
+    const finishedMatch = normalizeFinishedMatch(match, safeDelta);
+    finishingRef.current = true;
+    dispatch({ type: "FINISH_MATCH", payload: { match: finishedMatch, rankingDelta: safeDelta } });
+    setPlaying(false);
+    setTab("home");
+    const result = finishedMatch.result || "draw";
+    setToast(result === "win" ? `¡Victoria! ${safeDelta >= 0 ? "+" : ""}${safeDelta} pts` : result === "loss" ? `Derrota · ${safeDelta} pts` : "Empate");
+  };
+
+  const handleFindRival = () => setToast("Buscando rival…");
+
+  /* --- Renderizado de pantallas --- */
+
+  // Estado de boot
+  if (!state.hydrated || !bootDone) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="flex flex-col items-center">
+          <div className="h-16 w-16 rounded-2xl bg-[#00703a] flex items-center justify-center shadow-lg shadow-[#014F2A]/20 animate-pulse">
+            <CircleDot className="text-white" size={28} strokeWidth={2.5} />
+          </div>
+          <p className="mt-4 text-slate-500 font-semibold text-sm">Cargando Birdix…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Sin sesión → auth
+  if (!state.session) {
+    return (
+      <>
+        <AuthScreen onLogin={handleLogin} onRegister={handleRegister} />
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </>
+    );
+  }
+
+  // Sesión sin perfil → onboarding
+  if (!state.profile) {
+    return (
+      <>
+        <OnboardingStepper user={state.user} onDone={handleOnboardingDone} />
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </>
+    );
+  }
+
+  // Partida activa en curso (modo jugar)
+  if (playing && state.activeMatch) {
+    return (
+      <>
+        {isTeamMatch(state.activeMatch) ? (
+          <TeamStablefordScreen
+            match={state.activeMatch}
+            selectedCards={state.selectedCards}
+            ranking={state.ranking}
+            playerBirdixHcp={state.profile?.birdixHcp ?? state.profile?.hcp}
+            onFinish={handleFinishMatch}
+            onCancel={() => setPlaying(false)}
+          />
+        ) : (
+          <MatchPlayScreen
+            match={state.activeMatch}
+            selectedCards={state.selectedCards}
+            ranking={state.ranking}
+            playerBirdixHcp={state.profile?.birdixHcp ?? state.profile?.hcp}
+            onFinish={handleFinishMatch}
+            onCancel={() => setPlaying(false)}
+          />
+        )}
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </>
+    );
+  }
+
+  const appBackground =
+    tab === "home" ? "#FBFAF6" :
+      tab === "matches" ? "#F5FBF7" :
+        tab === "cards" ? "#FAF8F1" :
+          tab === "ranking" ? "#F7F7F4" :
+            tab === "profile" ? "#F8FAF8" :
+              "#F8FAFC";
+
+  return (
+    <div className="min-h-screen text-slate-900 antialiased transition-colors duration-300" style={{ background: appBackground }}>
+      <Toast message={toast} onDone={() => setToast(null)} />
+
+      <main className="mx-auto max-w-[900px] px-4 sm:px-6 pt-6 pb-32">
+        {tab === "home" && (
+          <HomeScreen
+            profile={state.profile}
+            ranking={state.ranking}
+            position={state.position}
+            matches={state.matches}
+            onCreate={() => setTab("matches")}
+            onGoCards={() => setTab("cards")}
+            onGoProfile={() => setTab("profile")}
+            onFindRival={handleFindRival}
+          />
+        )}
+        {tab === "matches" && (
+          <MatchesScreen
+            matches={state.matches}
+            activeMatch={state.activeMatch}
+            selectedCards={state.selectedCards}
+            profile={state.profile}
+            ranking={state.ranking}
+            onCreateMatch={handleCreateMatch}
+            onSelectCards={(cards) => dispatch({ type: "SET_SELECTED_CARDS", payload: cards })}
+            onOpenActive={() => {
+              if (state.activeMatch) setPlaying(true);
+            }}
+          />
+        )}
+        {tab === "cards" && <CardsScreen />}
+        {tab === "ranking" && (
+          <RankingScreen profile={state.profile} ranking={state.ranking} position={state.position} />
+        )}
+        {tab === "profile" && (
+          <ProfileScreen
+            profile={state.profile}
+            matches={state.matches}
+            ranking={state.ranking}
+            position={state.position}
+            onLogout={handleLogout}
+          />
+        )}
+      </main>
+
+      <TabBar active={tab} onChange={setTab} />
+    </div>
+  );
+}
