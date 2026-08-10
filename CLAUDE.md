@@ -96,6 +96,27 @@ Compatibilidad con lo demás: no choca con Supabase (de hecho gstack puede usar 
 
 Requiere Claude Code, Git y Bun instalados en el ordenador — instalar cuando toque programar la fase 3 en Claude Code.
 
+## Reglamento de las 10 cartas — cerrado 10 ago 2026
+
+Revisión completa cerrada el 10 de agosto de 2026 (ver `BIRDIX_REGLAMENTO.md` para el detalle). Cambios sobre la versión inicial de 12 cartas extraída de `App.jsx`:
+
+- Se eliminan **Punto Limpio** (valor casi gratis, sin tensión estratégica real) y **Bajo Presión** (deja el mazo en un número más redondo y visualmente cuadrado). Quedan **10 cartas**.
+- Reglas de mazo, no existían antes en el reglamento escrito: cada jugador elige 2 cartas de las 10 si juega 9 hoyos, o 4 si juega 18, antes de empezar la partida. Máximo 1 carta por hoyo, sin excepción — incluye a las cartas de reacción (Segundo Golpe, Bloqueo).
+- Escudo y Remontada: redacción aclarada para evitar ambigüedad en partida (ver documento).
+- Pendiente: trasladar estos cambios a la lógica real de `src/App.jsx` — hoy el código solo tiene las 12 cartas originales, sin las reglas de mazo. Cerrar formalmente en `/plan-eng-review` junto con la fórmula del Rango (ver sección 4 de `BIRDIX_REGLAMENTO.md`).
+
+## Estrategia de lanzamiento y validación — decidido 10 ago 2026
+
+Sesión de negocio/marketing del 10 de agosto en Cowork (contexto previo: `/office-hours` del 9 de agosto). Decisiones:
+
+- Etapa real: pre-producto, sin validación externa. La señal más fuerte hoy es que el grupo del fundador pregunta por iniciativa propia "¿cuándo lo tendré?" — mejor que un "sí lo probaría" inducido, pero sigue siendo círculo cercano.
+- No se produce contenido de marketing ni se promociona nada todavía. Primero, señal real.
+- Alcance del primer lanzamiento: **núcleo pulido únicamente** — una partida 1vs1 completa (selección de cartas, juego de cartas, cálculo Stableford neto, actualización del Rango) sin historial, perfiles ni progresión a largo plazo. Ver `BIRDIX_DESIGN_BRIEF.md`.
+- Este lanzamiento al grupo del fundador es un **lanzamiento real, no un test** — aprovechando la ventana de verano (más luz, más movimiento en los clubes) para las primeras partidas.
+- Por qué el reglamento se cierra primero: es la pieza cara de cambiar una vez la gente ya juega y tiene expectativas formadas sobre cómo funcionan el Rango y las cartas. El resto de la app sí puede iterarse por prueba y error después del lanzamiento — capital en juego bajo, no hace falta validación exhaustiva previa para eso.
+- Contenido: se graba durante las partidas reales con el grupo — no como promesa de producto, sino como prueba de que funciona y semilla de contenido para cuando sí se promocione más ampliamente.
+- Siguiente paso: diseño visual del núcleo pulido vía `/design-consultation` en Claude Code (gstack), usando `BIRDIX_DESIGN_BRIEF.md` como input.
+
 ## Roadmap sugerido (por fases)
 
 1. **Rango Birdix con protagonismo real**: subdivisiones dentro de cada división (ej. Oro I/II/III), rediseño visual para que el rango domine sobre el hándicap en Home y Perfil. → Cowork/Claude Code.
