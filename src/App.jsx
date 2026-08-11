@@ -13,10 +13,6 @@ import {
   Check,
   X,
   Flag,
-  Target,
-  Shield,
-  Zap,
-  RefreshCcw,
   Sparkles,
   Crown,
   TrendingUp,
@@ -34,18 +30,22 @@ import {
   Clock,
   AlertCircle,
   CircleDot,
-  Hand,
-  Ban,
-  Gauge,
-  Gift,
-  Rewind,
-  CircleSlash,
-  CheckCircle2,
   Search,
   Settings,
   Info,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import {
+  normalizeHcp,
+  normalizeBirdixHcp,
+  formatBirdixHcp,
+  getProfileBirdixHcp,
+  getRivalBirdixHcp,
+  toRankingPoints,
+  calculateEloDelta,
+  calculateBirdixHcpAfterMatch,
+} from "./domain/rango";
+import { CARDS, applyStablefordCardEffect, isCardPlayable, cardNeedsTarget } from "./domain/cards";
 
 /* =========================================================================
    BIRDIX · Prototipo frontend
@@ -206,129 +206,6 @@ const getNextDivision = (points) => {
   return i >= 0 && i < DIVISIONS.length - 1 ? DIVISIONS[i + 1] : null;
 };
 
-const CARDS = [
-  {
-    id: "second-shot",
-    name: "Segundo Golpe",
-    short: "Repites un golpe.",
-    desc: "Justo después de hacer un golpe puedes repetirlo. El segundo cuenta como definitivo, aunque sea peor.",
-    type: "Reacción",
-    icon: RefreshCcw,
-    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
-    chip: "bg-[#00703a]",
-  },
-  {
-    id: "block",
-    name: "Bloqueo",
-    short: "Cancelas una carta rival.",
-    desc: "Inmediatamente después de que el rival revele una carta, la anulas. Solo cancela esa carta concreta.",
-    type: "Defensa",
-    icon: CircleSlash,
-    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
-    chip: "bg-[#D67560]",
-  },
-  {
-    id: "shield",
-    name: "Escudo",
-    short: "Te proteges un hoyo.",
-    desc: "Antes de empezar el hoyo. El rival no puede usar cartas contra ti durante todo ese hoyo.",
-    type: "Defensa",
-    icon: Shield,
-    accent: "bg-sky-50 text-sky-700 border-sky-200",
-    chip: "bg-sky-600",
-  },
-  {
-    id: "double",
-    name: "Todo o Nada",
-    short: "Duplicas tus puntos.",
-    desc: "Antes de empezar el hoyo. Duplica tus puntos Stableford netos de ese hoyo.",
-    type: "Ofensiva",
-    icon: Zap,
-    accent: "bg-amber-50 text-amber-700 border-amber-200",
-    chip: "bg-amber-500",
-  },
-  {
-    id: "steal",
-    name: "Roba Punto",
-    short: "Robas 1 punto.",
-    desc: "Antes de empezar el hoyo. Si haces más puntos que el rival en el hoyo, le robas 1 punto.",
-    type: "Ofensiva",
-    icon: Hand,
-    accent: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
-    chip: "bg-fuchsia-600",
-  },
-  {
-    id: "safe-hole",
-    name: "Hoyo Seguro",
-    short: "Mínimo 1 punto.",
-    desc: "Antes de empezar el hoyo. Si haces 0 puntos, recibes 1 punto. Si haces más de 0, no añade extra.",
-    type: "Defensa",
-    icon: CheckCircle2,
-    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
-    chip: "bg-[#00703a]",
-  },
-  {
-    id: "no-driver",
-    name: "Driver Prohibido",
-    short: "El rival sin driver.",
-    desc: "Antes del golpe de salida del rival. Solo afecta a su primer golpe del hoyo.",
-    type: "Sabotaje",
-    icon: Ban,
-    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
-    chip: "bg-[#D67560]",
-  },
-  {
-    id: "no-club",
-    name: "Palo Prohibido",
-    short: "Eliges un palo prohibido.",
-    desc: "Antes de empezar el hoyo. No puedes prohibir el putter. Dura solo un hoyo.",
-    type: "Sabotaje",
-    icon: Ban,
-    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
-    chip: "bg-[#D67560]",
-  },
-  {
-    id: "clean-point",
-    name: "Punto Limpio",
-    short: "+1 si juegas limpio.",
-    desc: "Antes de empezar el hoyo. +1 punto si completas el hoyo sin penalización oficial.",
-    type: "Ofensiva",
-    icon: Target,
-    accent: "bg-lime-50 text-lime-700 border-lime-200",
-    chip: "bg-lime-600",
-  },
-  {
-    id: "pressure",
-    name: "Bajo Presión",
-    short: "Castigas el bogey.",
-    desc: "Antes de empezar el hoyo. Si el rival hace bogey o peor, pierde 1 punto. Si hace par o mejor, no hace efecto.",
-    type: "Sabotaje",
-    icon: Gauge,
-    accent: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
-    chip: "bg-fuchsia-600",
-  },
-  {
-    id: "birdix-prize",
-    name: "Premio Birdix",
-    short: "Bonus por birdie.",
-    desc: "Antes de empezar el hoyo. +2 si haces birdie. +3 si haces eagle o mejor.",
-    type: "Ofensiva",
-    icon: Gift,
-    accent: "bg-amber-50 text-amber-700 border-amber-200",
-    chip: "bg-amber-500",
-  },
-  {
-    id: "comeback",
-    name: "Remontada",
-    short: "+2 si remontas.",
-    desc: "Antes de empezar el hoyo. Solo si vas por detrás en el total y superas al rival en ese hoyo: +2 puntos.",
-    type: "Ofensiva",
-    icon: Rewind,
-    accent: "bg-violet-50 text-violet-700 border-violet-200",
-    chip: "bg-violet-600",
-  },
-];
-
 const FAKE_RIVALS = [
   { id: "r1", name: "Carlos Mendoza", hcp: 9, birdixHcp: 9, club: "Real Club La Moraleja", rank: 1342, division: "platino", avatar: "CM" },
   { id: "r2", name: "Marta Riera", hcp: 14, birdixHcp: 14, club: "Sotogrande", rank: 1180, division: "platino", avatar: "MR" },
@@ -427,20 +304,6 @@ const initialsFromName = (name = "?") =>
     .slice(0, 2)
     .toUpperCase() || "?";
 
-const normalizeHcp = (hcp) => clampNumber(hcp, 0, 54, 0);
-
-const normalizeBirdixHcp = (hcp) => {
-  const n = Number(hcp);
-  const safe = Number.isFinite(n) ? n : 18;
-  return Math.round(Math.min(36, Math.max(0, safe)) * 10) / 10;
-};
-
-const formatBirdixHcp = (hcp) => normalizeBirdixHcp(hcp).toFixed(1);
-
-const getProfileBirdixHcp = (profile) => normalizeBirdixHcp(profile?.birdixHcp ?? profile?.hcp ?? 18);
-
-const getRivalBirdixHcp = (rival) => normalizeBirdixHcp(rival?.birdixHcp ?? rival?.hcp ?? 18);
-
 const isTeamMatch = (match) =>
   match?.matchType === "2v2" || match?.format === "2 vs 2" || match?.format === "2v2";
 
@@ -508,8 +371,6 @@ const averageRank = (players) => {
 
 const oppositeResult = (result) => (result === "win" ? "loss" : result === "loss" ? "win" : "draw");
 
-const cardNeedsTarget = (cardId) => ["steal", "pressure", "no_driver", "no_club", "block"].includes(cardId);
-
 const getCourseById = (courseIdOrName, fallback = COURSES[0]) =>
   COURSES.find((c) => c.id === courseIdOrName || c.name === courseIdOrName) || fallback;
 
@@ -524,8 +385,6 @@ const hasVerifiedScorecard = (course, holeCount = 18) => {
   return course?.scorecardStatus === "verified" && holes.length >= clampNumber(holeCount, 1, 18, 18);
 };
 
-const toRankingPoints = (points) => Math.max(0, Math.round(Number.isFinite(Number(points)) ? Number(points) : 0));
-
 const strokesForIndex = (hcpDiff, strokeIndex) => {
   const diff = Math.max(0, Math.round(hcpDiff));
   const fullRounds = Math.floor(diff / 18);
@@ -539,64 +398,6 @@ const getHandicapStrokesForHole = (playerHcp, rivalHcp, strokeIndex) => {
   if (player === rival) return { player: 0, rival: 0 };
   if (player > rival) return { player: strokesForIndex(player - rival, strokeIndex), rival: 0 };
   return { player: 0, rival: strokesForIndex(rival - player, strokeIndex) };
-};
-
-const applyStablefordCardEffect = (card, ctx) => {
-  if (!card) return { delta: 0, rivalDelta: 0, note: null };
-  if (!ctx.playerHasScore) return { delta: 0, rivalDelta: 0, note: `${card.name}: introduce golpes` };
-  switch (card.id) {
-    case "double":
-      return ctx.playerBase > 0
-        ? { delta: ctx.playerBase, rivalDelta: 0, note: "Todo o Nada: puntos x2" }
-        : { delta: 0, rivalDelta: 0, note: "Todo o Nada: sin puntos que duplicar" };
-    case "steal":
-      return ctx.rivalHasScore && ctx.playerBase > ctx.rivalBase
-        ? { delta: 1, rivalDelta: -1, note: "Roba Punto: +1 / rival -1" }
-        : { delta: 0, rivalDelta: 0, note: "Roba Punto: no activa" };
-    case "safe-hole":
-      return ctx.playerBase === 0 ? { delta: 1, rivalDelta: 0, note: "Hoyo Seguro: +1" } : { delta: 0, rivalDelta: 0, note: "Hoyo Seguro: ya sumas" };
-    case "clean-point":
-      return !ctx.hasPenalty ? { delta: 1, rivalDelta: 0, note: "Punto Limpio: +1" } : { delta: 0, rivalDelta: 0, note: "Punto Limpio: con penalización" };
-    case "birdix-prize":
-      if (ctx.playerNetDiff <= -2) return { delta: 3, rivalDelta: 0, note: "Premio Birdix: +3" };
-      if (ctx.playerNetDiff === -1) return { delta: 2, rivalDelta: 0, note: "Premio Birdix: +2" };
-      return { delta: 0, rivalDelta: 0, note: "Premio Birdix: sin birdie neto" };
-    case "comeback":
-      return ctx.rivalHasScore && ctx.isBehind && ctx.playerBase > ctx.rivalBase
-        ? { delta: 2, rivalDelta: 0, note: "Remontada: +2" }
-        : { delta: 0, rivalDelta: 0, note: "Remontada: no activa" };
-    case "pressure":
-      return ctx.rivalHasScore && ctx.rivalNetDiff >= 1
-        ? { delta: 0, rivalDelta: -1, note: "Bajo Presión: rival -1" }
-        : { delta: 0, rivalDelta: 0, note: "Bajo Presión: sin efecto" };
-    default:
-      return { delta: 0, rivalDelta: 0, note: `${card.name}: sin efecto de puntos` };
-  }
-};
-
-const calculateRankingChange = (result, playerRank = 1000, rivalRank = 1000) => {
-  const diff = rivalRank - playerRank;
-  const base = Math.round(15 + diff * 0.015);
-  if (result === "win") return Math.round(Math.max(8, Math.min(40, base)));
-  if (result === "loss") return Math.round(-Math.max(6, Math.min(30, 20 - diff * 0.01)));
-  return Math.round(diff * 0.01);
-};
-
-const calculateBirdixHcpAfterMatch = (profile, matchesWithLatestFirst) => {
-  const current = getProfileBirdixHcp(profile);
-  const latest = matchesWithLatestFirst[0]?.result;
-  if (latest !== "win" && latest !== "loss") return current;
-
-  let streak = 0;
-  for (const match of matchesWithLatestFirst) {
-    if (match.result === latest) streak++;
-    else break;
-  }
-
-  if (streak > 0 && streak % 2 === 0) {
-    return normalizeBirdixHcp(current + (latest === "win" ? -1.5 : 1));
-  }
-  return current;
 };
 
 const formatDate = (d) => {
@@ -705,7 +506,7 @@ function reducer(state, action) {
       const newRanking = toRankingPoints(safeRanking + safeDelta);
       const posDelta = -Math.round(safeDelta * 3.2);
       const nextProfile = state.profile
-        ? { ...state.profile, birdixHcp: calculateBirdixHcpAfterMatch(state.profile, nextMatches) }
+        ? { ...state.profile, birdixHcp: calculateBirdixHcpAfterMatch(state.profile, finishedMatch) }
         : state.profile;
       return {
         ...state,
@@ -1127,7 +928,7 @@ const AuthScreen = ({ onLogin, onRegister }) => {
 
             <div className="mt-10 flex items-center gap-2 flex-wrap justify-center">
               <Pill icon={Swords} tone="emerald">1 vs 1 · 2 vs 2</Pill>
-              <Pill icon={Layers} tone="amber">12 cartas</Pill>
+              <Pill icon={Layers} tone="amber">{CARDS.length} cartas</Pill>
               <Pill icon={Trophy} tone="sky">Ranking global</Pill>
             </div>
           </div>
@@ -1403,7 +1204,7 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
             <ChevronRight size={18} className="opacity-70" />
           </div>
           <p className="mt-6 text-[11px] uppercase tracking-wider text-[#6EE7B7] font-semibold">Mi mazo</p>
-          <p className="text-base font-black">12 cartas</p>
+          <p className="text-base font-black">{CARDS.length} cartas</p>
         </button>
         <button onClick={onGoProfile} className="text-left rounded-[28px] bg-white ring-1 ring-black/5 p-4 shadow-sm active:scale-[0.99] transition-all duration-200">
           <div className="flex items-center justify-between">
@@ -1891,7 +1692,7 @@ const CardsScreen = () => {
     <div className="space-y-5">
       <div>
         <h1 className="text-[26px] font-black tracking-tight text-slate-900">Cartas Birdix</h1>
-        <p className="text-[13px] text-slate-500 mt-1">Tu mazo oficial. 12 cartas. Estrategia infinita.</p>
+        <p className="text-[13px] text-slate-500 mt-1">Tu mazo oficial. {CARDS.length} cartas. Estrategia infinita.</p>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
@@ -2283,10 +2084,6 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
               self.delta += self.base === 0 ? 1 : 0;
               note = self.base === 0 ? "Hoyo Seguro: +1" : "Hoyo Seguro: ya sumas";
               break;
-            case "clean-point":
-              self.delta += h.penalty ? 0 : 1;
-              note = h.penalty ? "Punto Limpio: con penalización" : "Punto Limpio: +1";
-              break;
             case "birdix-prize":
               if (self.netDiff <= -2) {
                 self.delta += 3;
@@ -2306,16 +2103,8 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
                 note = "Remontada: no activa";
               }
               break;
-            case "pressure":
-              if (target?.hasScore && target.netDiff >= 1) {
-                target.delta -= 1;
-                note = `Bajo Presión: ${target.name} -1`;
-              } else {
-                note = "Bajo Presión: sin efecto";
-              }
-              break;
-            case "no_driver":
-            case "no_club":
+            case "no-driver":
+            case "no-club":
             case "block":
               note = target ? `${card.name}: objetivo ${target.name}` : `${card.name}: sin objetivo`;
               break;
@@ -2406,8 +2195,8 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
     const teamBResult = oppositeResult(result);
     const teamAAvg = averageRank(teamA);
     const teamBAvg = averageRank(teamB);
-    const teamADelta = calculateRankingChange(result, teamAAvg, teamBAvg);
-    const teamBDelta = calculateRankingChange(teamBResult, teamBAvg, teamAAvg);
+    const teamADelta = calculateEloDelta(teamAAvg, teamBAvg, result);
+    const teamBDelta = calculateEloDelta(teamBAvg, teamAAvg, teamBResult);
     const rankedPlayers = players.map((p) => {
       const playerResult = p.team === "A" ? result : teamBResult;
       const delta = p.team === "A" ? teamADelta : teamBDelta;
@@ -2645,7 +2434,16 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
             </div>
             <p className="text-[12px] text-slate-500 mb-3">Las cartas las juega el usuario actual. Las ofensivas pueden elegir rival.</p>
             <div className="grid grid-cols-2 gap-3">
-              {selectedCardIds.map((id) => {
+              {selectedCardIds
+                .filter((id) => {
+                  const c = CARDS.find((x) => x.id === id);
+                  if (!c) return false;
+                  if (usedCardIds.includes(id) && current.cardId !== id) return true;
+                  const priorA = hole > 0 ? computed[hole - 1]?.runningTeamA || 0 : 0;
+                  const priorB = hole > 0 ? computed[hole - 1]?.runningTeamB || 0 : 0;
+                  return isCardPlayable(c, { isBehind: priorA < priorB });
+                })
+                .map((id) => {
                 const c = CARDS.find((x) => x.id === id);
                 if (!c) return null;
                 const used = usedCardIds.includes(id) && current.cardId !== id;
@@ -2796,7 +2594,7 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
     if (isFinishing) return;
     setIsFinishing(true);
     const result = calculateMatchWinner(playerTotal, rivalTotal);
-    const rankingDelta = calculateRankingChange(result, ranking, match?.rivalRank || 1000);
+    const rankingDelta = calculateEloDelta(ranking, match?.rivalRank || 1000, result);
     const finalMatch = {
       ...match,
       id: match?.id || "m_" + Date.now(),
@@ -3047,7 +2845,16 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
             </div>
             <p className="text-[12px] text-slate-500 mb-3">Selecciona una de tus cartas disponibles.</p>
             <div className="grid grid-cols-2 gap-3">
-              {selectedCardIds.map((id) => {
+              {selectedCardIds
+                .filter((id) => {
+                  const c = CARDS.find((x) => x.id === id);
+                  if (!c) return false;
+                  if (usedCardIds.includes(id) && current.cardId !== id) return true;
+                  const priorPlayer = hole > 0 ? computed[hole - 1]?.runningPlayer || 0 : 0;
+                  const priorRival = hole > 0 ? computed[hole - 1]?.runningRival || 0 : 0;
+                  return isCardPlayable(c, { isBehind: priorPlayer < priorRival });
+                })
+                .map((id) => {
                 const c = CARDS.find((x) => x.id === id);
                 if (!c) return null;
                 const used = usedCardIds.includes(id) && current.cardId !== id;
