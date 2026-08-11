@@ -19,7 +19,9 @@ Decisión de alcance (10 ago 2026): el primer lanzamiento no es la app completa,
 
 ### Fuera de esta fase (explícitamente no se diseña todavía)
 
-Historial de partidas pasadas, progresión visual del Rango a lo largo del tiempo, perfiles, ligas/temporadas, más de un formato que 1vs1, onboarding para gente fuera del grupo del fundador.
+Historial de partidas pasadas, progresión visual del Rango a lo largo del tiempo, ligas/temporadas, más de un formato que 1vs1, onboarding para gente fuera del grupo del fundador, ilustración propia por carta (fase 4 del roadmap).
+
+**Actualización 10 ago 2026, durante `/design-consultation`:** Perfil y Clasificación, que esta sección marcaba como fuera de alcance, se añadieron al diseño a petición expresa — ver `DESIGN.md`. Se mantienen con datos de ejemplo porque Supabase todavía no está conectado; no implica que la funcionalidad completa (historial, progresión) esté dentro del alcance de este lanzamiento, solo la pantalla.
 
 ## Reglamento completo de referencia
 

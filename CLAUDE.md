@@ -111,11 +111,15 @@ Sesión de negocio/marketing del 10 de agosto en Cowork (contexto previo: `/offi
 
 - Etapa real: pre-producto, sin validación externa. La señal más fuerte hoy es que el grupo del fundador pregunta por iniciativa propia "¿cuándo lo tendré?" — mejor que un "sí lo probaría" inducido, pero sigue siendo círculo cercano.
 - No se produce contenido de marketing ni se promociona nada todavía. Primero, señal real.
-- Alcance del primer lanzamiento: **núcleo pulido únicamente** — una partida 1vs1 completa (selección de cartas, juego de cartas, cálculo Stableford neto, actualización del Rango) sin historial, perfiles ni progresión a largo plazo. Ver `BIRDIX_DESIGN_BRIEF.md`.
+- Alcance del primer lanzamiento: **núcleo pulido** — una partida 1vs1 completa (selección de cartas, juego de cartas, cálculo Stableford neto, actualización del Rango), sin historial de partidas pasadas ni progresión a largo plazo. Perfil y Clasificación (con datos de ejemplo) se sumaron al alcance de diseño el 10 de agosto durante la propia `/design-consultation` — ver nota de alcance en `DESIGN.md`. Ver `BIRDIX_DESIGN_BRIEF.md`.
 - Este lanzamiento al grupo del fundador es un **lanzamiento real, no un test** — aprovechando la ventana de verano (más luz, más movimiento en los clubes) para las primeras partidas.
 - Por qué el reglamento se cierra primero: es la pieza cara de cambiar una vez la gente ya juega y tiene expectativas formadas sobre cómo funcionan el Rango y las cartas. El resto de la app sí puede iterarse por prueba y error después del lanzamiento — capital en juego bajo, no hace falta validación exhaustiva previa para eso.
 - Contenido: se graba durante las partidas reales con el grupo — no como promesa de producto, sino como prueba de que funciona y semilla de contenido para cuando sí se promocione más ampliamente.
-- Siguiente paso: diseño visual del núcleo pulido vía `/design-consultation` en Claude Code (gstack), usando `BIRDIX_DESIGN_BRIEF.md` como input.
+- Diseño visual del núcleo pulido: cerrado el 10 de agosto vía `/design-consultation` en Claude Code (gstack) — ver `DESIGN.md`. Siguiente paso: llevar el sistema a producción (`/design-html`) y decidir cuándo abordar la ilustración propia de las 10 cartas (fase 4 del roadmap).
+
+## Design System
+
+Siempre leer `DESIGN.md` antes de tomar cualquier decisión visual o de UI. Paleta, tipografía, profundidad, uso del logo, navegación y las 7 pantallas del núcleo pulido están definidas ahí. No desviarse sin aprobación explícita del usuario. En modo QA, señalar cualquier código que no coincida con `DESIGN.md`.
 
 ## Roadmap sugerido (por fases)
 
