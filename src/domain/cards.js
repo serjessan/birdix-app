@@ -114,25 +114,52 @@ export const CARDS = [
 export const cardNeedsTarget = (cardId) => ["steal", "no-driver", "no-club", "block"].includes(cardId);
 
 /**
- * ¿Se puede seleccionar esta carta ahora mismo? Hoy solo Remontada tiene una
- * condición de elegibilidad — el reglamento dice que solo se puede jugar si
- * vas perdiendo en puntos acumulados hasta ese hoyo.
+ * ¿Se puede seleccionar esta carta ahora mismo?
+ *
+ * - `ctx.alreadyPlayedThisHole`: máximo 1 carta por hoyo, sin excepción —
+ *   incluye a las cartas de reacción (Segundo Golpe, Bloqueo). Bloquea
+ *   cualquier carta, sin importar cuál. Ver BIRDIX_REGLAMENTO.md §6.
+ * - `ctx.rivalShieldActive`: el rival tiene Escudo activo este hoyo — no
+ *   puede jugarse ninguna carta contra él. Extendido en /plan-eng-review
+ *   19 ago 2026 (Architecture Decision 4, T1): Escudo se resuelve aquí, en
+ *   selección, no como anulación posterior de efecto — así el rival nunca
+ *   llega a `applyStablefordCardEffect` con una carta que no iba a contar.
+ * - Remontada: solo se puede jugar si vas perdiendo en puntos acumulados
+ *   hasta ese hoyo (sin cambios).
  */
 export const isCardPlayable = (card, ctx = {}) => {
   if (!card) return false;
+  if (ctx.alreadyPlayedThisHole) return false;
+  if (ctx.rivalShieldActive) return false;
   if (card.id === "comeback") return Boolean(ctx.isBehind);
   return true;
 };
 
 /**
  * Efecto en puntos Stableford de una carta jugada en un hoyo (1vs1).
- * Segundo Golpe, Bloqueo, Escudo, Driver Prohibido y Palo Prohibido no
- * afectan a los puntos — se registran (qué carta, en qué hoyo) sin lógica
- * de efecto, honor system en el campo, hasta que haya Supabase Realtime
- * (ver TODOS.md). No es un olvido: es la decisión tomada en /plan-eng-review.
+ *
+ * Driver Prohibido y Palo Prohibido siguen sin efecto de puntos — se
+ * registran (qué carta, en qué hoyo) sin lógica de targeting real, honor
+ * system en el campo, hasta que haya Supabase Realtime (ver TODOS.md).
+ *
+ * Escudo, Bloqueo y Segundo Golpe SÍ tienen efecto real desde
+ * /plan-eng-review 19 ago 2026 (Architecture Decision 4, T1):
+ * - Escudo nunca llega hasta aquí — se bloquea en `isCardPlayable` antes de
+ *   que el rival pueda seleccionar una carta, así que su carta jamás se
+ *   resuelve como jugada.
+ * - Bloqueo no tiene delta propio (sigue siendo "sin efecto de puntos" en
+ *   el switch de abajo), pero anula la carta contraria: quien orquesta la
+ *   resolución conjunta del hoyo (T4) pasa `ctx.cancelledByBlock = true` al
+ *   resolver esa carta rival — ninguna de las dos cuenta, ambas se dan por
+ *   gastadas igual (BIRDIX_REGLAMENTO.md §6, "De reacción").
+ * - Segundo Golpe repite el golpe y el segundo cuenta como definitivo,
+ *   incluso si sale peor — se expresa como la diferencia de puntos entre
+ *   el golpe repetido (`ctx.secondShotBase`, ya calculado por quien llama,
+ *   igual que `playerBase`) y el golpe original.
  */
 export const applyStablefordCardEffect = (card, ctx) => {
   if (!card) return { delta: 0, rivalDelta: 0, note: null };
+  if (ctx.cancelledByBlock) return { delta: 0, rivalDelta: 0, note: `${card.name}: anulada por Bloqueo rival` };
   if (!ctx.playerHasScore) return { delta: 0, rivalDelta: 0, note: `${card.name}: introduce golpes` };
   switch (card.id) {
     case "double":
@@ -153,6 +180,9 @@ export const applyStablefordCardEffect = (card, ctx) => {
       return ctx.rivalHasScore && ctx.isBehind && ctx.playerBase > ctx.rivalBase
         ? { delta: 2, rivalDelta: 0, note: "Remontada: +2" }
         : { delta: 0, rivalDelta: 0, note: "Remontada: no activa" };
+    case "second-shot":
+      if (ctx.secondShotBase == null) return { delta: 0, rivalDelta: 0, note: "Segundo Golpe: pendiente de repetir el golpe" };
+      return { delta: ctx.secondShotBase - ctx.playerBase, rivalDelta: 0, note: "Segundo Golpe: el golpe repetido cuenta como definitivo" };
     default:
       return { delta: 0, rivalDelta: 0, note: `${card.name}: sin efecto de puntos` };
   }

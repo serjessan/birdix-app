@@ -46,8 +46,8 @@ describe("applyStablefordCardEffect", () => {
     expect(applyStablefordCardEffect(card("comeback"), { ...behindAndWinning, isBehind: false }).delta).toBe(0);
   });
 
-  it("no-scoring cards (second-shot, block, shield, no-driver, no-club) never affect points", () => {
-    ["second-shot", "block", "shield", "no-driver", "no-club"].forEach((id) => {
+  it("no-scoring cards (block, shield, no-driver, no-club) never affect points", () => {
+    ["block", "shield", "no-driver", "no-club"].forEach((id) => {
       const fx = applyStablefordCardEffect(card(id), baseCtx);
       expect(fx.delta).toBe(0);
       expect(fx.rivalDelta).toBe(0);
@@ -56,6 +56,49 @@ describe("applyStablefordCardEffect", () => {
 
   it("no card played is a no-op", () => {
     expect(applyStablefordCardEffect(null, baseCtx)).toEqual({ delta: 0, rivalDelta: 0, note: null });
+  });
+
+  describe("second-shot (Segundo Golpe)", () => {
+    it("does nothing until the second shot's points are known", () => {
+      const fx = applyStablefordCardEffect(card("second-shot"), baseCtx);
+      expect(fx.delta).toBe(0);
+      expect(fx.rivalDelta).toBe(0);
+    });
+
+    it("counts the repeated stroke as final, even when it scores worse", () => {
+      // playerBase: 2 (original stroke) → secondShotBase: 0 (repeated stroke came out worse)
+      const worse = applyStablefordCardEffect(card("second-shot"), { ...baseCtx, secondShotBase: 0 });
+      expect(worse.delta).toBe(-2);
+
+      // repeated stroke scores better
+      const better = applyStablefordCardEffect(card("second-shot"), { ...baseCtx, secondShotBase: 5 });
+      expect(better.delta).toBe(3);
+    });
+
+    it("is a no-op when the repeated stroke scores the same", () => {
+      const fx = applyStablefordCardEffect(card("second-shot"), { ...baseCtx, secondShotBase: baseCtx.playerBase });
+      expect(fx.delta).toBe(0);
+    });
+  });
+
+  describe("cancelledByBlock (Bloqueo rival)", () => {
+    it("zeroes out any card's effect, including one that would otherwise score", () => {
+      const fx = applyStablefordCardEffect(card("double"), { ...baseCtx, cancelledByBlock: true });
+      expect(fx.delta).toBe(0);
+      expect(fx.rivalDelta).toBe(0);
+      expect(fx.note).toMatch(/Bloqueo/);
+    });
+
+    it("wins over every other gate — cancels even before checking for a submitted score", () => {
+      const fx = applyStablefordCardEffect(card("steal"), { ...baseCtx, playerHasScore: false, cancelledByBlock: true });
+      expect(fx.delta).toBe(0);
+      expect(fx.note).toMatch(/Bloqueo/);
+    });
+
+    it("a card with no rival card to cancel resolves normally (not cancelled)", () => {
+      const fx = applyStablefordCardEffect(card("double"), baseCtx);
+      expect(fx.delta).toBe(baseCtx.playerBase);
+    });
   });
 });
 
@@ -67,11 +110,27 @@ describe("isCardPlayable", () => {
     expect(isCardPlayable(card("comeback"), { isBehind: false })).toBe(false);
   });
 
-  it("every other card is always selectable, regardless of match state", () => {
+  it("every other card is always selectable in a neutral match state", () => {
     CARDS.filter((c) => c.id !== "comeback").forEach((c) => {
       expect(isCardPlayable(c, { isBehind: false })).toBe(true);
       expect(isCardPlayable(c, { isBehind: true })).toBe(true);
     });
+  });
+
+  it("blocks every card, no exception, once a card was already played this hole", () => {
+    CARDS.forEach((c) => {
+      expect(isCardPlayable(c, { alreadyPlayedThisHole: true, isBehind: true })).toBe(false);
+    });
+  });
+
+  it("blocks every card against a rival with Escudo active, no exception", () => {
+    CARDS.forEach((c) => {
+      expect(isCardPlayable(c, { rivalShieldActive: true, isBehind: true })).toBe(false);
+    });
+  });
+
+  it("a normal hole with neither gate active allows a normal selection", () => {
+    expect(isCardPlayable(card("double"), { alreadyPlayedThisHole: false, rivalShieldActive: false })).toBe(true);
   });
 });
 
