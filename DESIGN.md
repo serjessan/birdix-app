@@ -1,6 +1,6 @@
 # Design System — Birdix (núcleo pulido)
 
-Generado por `/design-consultation` el 10 de agosto de 2026. Cubre las 7 pantallas del primer lanzamiento real (grupo del fundador): Inicio, Selección de mazo, Hoyo N, Marcador, Resultado, Perfil, Clasificación. No es un sistema nuevo desde cero — extiende lo ya documentado en [`branding/sistema-visual.md`](branding/sistema-visual.md) y lo ya construido en `src/App.jsx` (paleta `BX`, componentes base), y añade lo que faltaba para que el núcleo pulido tenga su propia voz en los momentos que importan.
+Generado por `/design-consultation` el 10 de agosto de 2026, actualizado el 19 de agosto de 2026. Cubre las 8 pantallas del primer lanzamiento real (grupo del fundador): Login/Registro, Inicio, Selección de mazo, Hoyo N, Marcador, Resultado, Perfil, Clasificación. No es un sistema nuevo desde cero — extiende lo ya documentado en [`branding/sistema-visual.md`](branding/sistema-visual.md) y lo ya construido en `src/App.jsx` (paleta `BX`, componentes base), y añade lo que faltaba para que el núcleo pulido tenga su propia voz en los momentos que importan.
 
 ## Product Context
 - **Qué es:** Golf competitivo con progresión tipo videojuego — el Rango Birdix protagoniza sobre el hándicap — y 10 cartas estratégicas sin azar jugadas durante partidas reales.
@@ -48,9 +48,12 @@ Objetivo: romper la sensación de interfaz plana sin sobrecargar — el propio m
 - **Fondo:** un resplandor radial de marca casi imperceptible + grano fotográfico al 3.5% de opacidad, fijo, sin interacción.
 - **Botones:** gradiente sutil claro→base→oscuro en vez de relleno plano, manteniendo la regla ya existente de sombra teñida de color (nunca gris genérica).
 
-## Uso del logo (nuevo en esta consulta)
-- **Isotipo únicamente** (marca cuadrada "iX"), en exactamente 3 sitios: barra superior de la app, cabecera de Inicio, sello pequeño en Resultado (como un sello de torneo que certifica el logro).
+## Uso del logo (nuevo en esta consulta; refinado el 19 ago 2026)
+- **Isotipo únicamente** (marca cuadrada "iX"), en exactamente 3 sitios dentro de la app: barra superior de la app, cabecera de Inicio, sello pequeño en Resultado (como un sello de torneo que certifica el logro). Añadido 19 ago: también en el formulario de Login/Registro (ver más abajo).
 - **El wordmark completo nunca aparece dentro de las pantallas de la app** — el manual de marca ya lo reserva para cabeceras y contexto de marketing, no para "avatar de app, espacios reducidos" (eso es trabajo del isotipo). Regla existente, respetada sin cambios.
+- **Excepción explícita — bienvenida pre-login (`AuthScreen`, `mode === "welcome"`):** único lugar de la app donde el wordmark se mantiene. Es el primer contacto de alguien sin sesión — más cerca de una splash de marketing que de una pantalla operativa, así que se trata como el manual de marca trata cabeceras/marketing, no como "avatar de app". El formulario que sigue (login/registro, `mode !== "welcome"`) sí es flujo operativo — usa isotipo, igual que el resto de la app. **Pendiente técnico:** hoy el componente `Logo` (`App.jsx:583`) usa `wordmark-white` por defecto en ambos casos — corregir el formulario de login/registro a `variant="isotipo"` al implementar.
+- **Rutas reales de los assets** (antes solo descritas conceptualmente): `public/branding/logos/birdix-isotipo-ix.png`, `birdix-wordmark-blanco-sobre-verde.png`, `birdix-wordmark-verde-sobre-blanco.png`. PNG 500×500, sin canal alfa (fondo sólido incluido en el archivo).
+- **Pendiente técnico (no bloqueante para el 10 sept):** el PNG a 500×500 rinde bien en los usos actuales dentro de la app (32–36px, muy sobremuestreado incluso a 3x). El riesgo real es de cara al PWA — íconos de instalación necesitan hasta 1024×1024 (maskable) y el archivo actual no tiene transparencia para componer sobre fondos distintos. Conseguir el isotipo en SVG antes de construir el manifest de PWA (ver TODOS.md).
 
 ## Iconografía y emoji (nuevo en esta consulta — "camino intermedio")
 - **Identidad de cada carta:** icono custom `lucide-react` + color de acento, consistente — se ve igual en iPhone y Android. El grupo del fundador no es 100% iPhone, así que esto no es opcional.
@@ -72,9 +75,21 @@ Objetivo: romper la sensación de interfaz plana sin sobrecargar — el propio m
   - **Revelar carta:** un flip seco y con peso — la carta ya estaba elegida, solo se revela. **Nunca** una animación de barajar, ruleta o brillo aleatorio: el reglamento es explícito en que las cartas nunca dependen del azar, y la animación tiene que decirlo sin palabras.
   - **Resultado:** el anillo de división se rellena y el número de Rango cuenta hacia su valor final.
 
-## Las 7 pantallas
+## Estado de conexión (nuevo — 19 ago 2026)
+Cierra el gap explícito que dejó abierto el `/plan-eng-review` del 19 de agosto: el canal Realtime nunca bloquea la partida (principio ya fijado en arquitectura — el jugador sigue apuntando golpes y jugando cartas con normalidad si se cae la conexión), pero faltaba el patrón visual. Segunda opinión de un subagente Claude independiente incorporada (Codex no estaba instalado en esta sesión).
+
+- **Dónde vive:** un punto de 6px en el hueco de simetría ya reservado en la cabecera fija de Hoyo N (`MatchPlayScreen`, `App.jsx:2763` — hoy un `<div className="h-10 w-10" />` vacío que balancea el botón de cerrar). Cero layout nuevo, presente en cada hoyo. No junto al isotipo — Hoyo N no es uno de los 3 sitios del isotipo (ver "Uso del logo"), así que ese emparejamiento no existe en esta pantalla.
+- **Online (por defecto):** sin punto. Invisible es el estado normal — importa más que cómo se ve degradado.
+- **Reconectando:** punto en `mist #9CA3AF` (nunca ámbar/rojo — el ámbar ya está tomado por la división Oro y acentos de carta; usarlo aquí mandaría la señal equivocada). Un pulso lento único (opacidad 0.4→1, ~2s ease), nunca un spinner girando.
+- **Vuelve la conexión:** destello breve en `greenLight #2D8E5C` (~600ms) y desaparece. Nunca desaparece en silencio — un jugador que nunca ve confirmación puede desconfiar de si sus golpes se guardaron de verdad.
+- **Sin texto ambiental, nunca.** Ni "reconectando…" ni "sin conexión" — el color solo ya lleva el mensaje completo; coherente con "sin jerga, botones grandes" para el extremo de 70 años del rango de edad.
+- **Excepción — carta jugada sin conexión:** única acción de suficiente peso (es el diferenciador entero del producto) para ganarse una línea de texto — franja inline breve (~1.5s) bajo la acción de la carta: "Carta guardada — se sincroniza sola." Nunca "reintentar", nunca implica una decisión del jugador. Los golpes apuntados sin conexión no llevan ningún tratamiento adicional más allá del punto ambiental — son de bajo riesgo y alta frecuencia; una confirmación en cada uno sería ruido.
+- **Por qué no un banner/hoja inferior tipo "estás sin conexión":** ese patrón asume que estar offline es excepcional y hay que disculparse por ello. En un campo de golf es un martes cualquiera — hacerlo más ruidoso que un punto violaría el propio principio de "nunca bloquea" que fijó la arquitectura.
+
+## Las 8 pantallas
 | # | Pantalla | Rol |
 |---|----------|-----|
+| — | Login/Registro | `AuthScreen` — bienvenida (wordmark, único sitio) + formulario (isotipo, utilitario) — ver "Uso del logo" |
 | 0 | Inicio | Entrada — CTA "Crear partida" + accesos a Perfil/Clasificación |
 | 1 | Selección de mazo | Elegir 2 cartas (9 hoyos) o 4 (18 hoyos) de las 10 |
 | 2 | Hoyo N | Plantilla que se repite por hoyo — golpes + jugar carta + revelación, fusionados en una sola pantalla |
@@ -96,3 +111,6 @@ Perfil y Clasificación quedaban explícitamente fuera de lo que cerró `BIRDIX_
 | 10 ago 2026 | Tipografía de momentos clave → Big Shoulders 900 (tras descartar General Sans, Cabinet Grotesk, Fraunces, Clash Grotesk, Satoshi) | Feedback repetido: las anteriores se sentían "de ordenador"; dirección pedida explícitamente: bold deportivo tipo marcador/dorsal |
 | 10 ago 2026 | Navegación: un único menú fijo abajo en las 7 pantallas, sin excepción | Simplificación explícita sobre la propuesta híbrida inicial (tab bar + botón atrás) |
 | 10 ago 2026 | Ilustración propia por carta queda fuera de esta consulta | Decisión propia del equipo, ya marcada como "más adelante" — fase 4 del roadmap |
+| 19 ago 2026 | Indicador de reconexión Realtime: punto de 6px en el hueco de simetría de la cabecera de Hoyo N, sin texto ambiental, verde al recuperar conexión | Cierra el gap explícito dejado por `/plan-eng-review` del 19 ago; segunda opinión (subagente Claude) descartó banner/toast por implicar que estar sin cobertura es excepcional, cuando en campo es rutina |
+| 19 ago 2026 | Login/Registro entra al inventario de pantallas: bienvenida mantiene wordmark (único sitio en la app, por ser pre-sesión/marketing), formulario pasa a isotipo | `AuthScreen` ya funcionaba en código sin tratamiento de sistema de diseño; el wordmark en el formulario violaba la regla ya cerrada de "nunca dentro de pantallas de la app" |
+| 19 ago 2026 | Rutas reales de logo documentadas; SVG del isotipo marcado como pendiente antes del manifest de PWA | Los PNG ya están en `public/branding/logos/` y en uso; a 500×500 sin alfa funcionan hoy pero no sirven para íconos de instalación (hasta 1024×1024) que exige el lanzamiento PWA del 10 sept |

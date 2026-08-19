@@ -188,13 +188,16 @@ const storage = {
    2 · CONSTANTES DE DOMINIO
    --------------------------------------------------------------------------*/
 
+/* Colores alineados a branding/sistema-visual.md (hex oficial de cada
+   división) — antes usaban degradados Tailwind stock que no coincidían.
+   Pendiente técnico cerrado en DESIGN.md al construir la pantalla Resultado. */
 const DIVISIONS = [
-  { key: "bronce", name: "Bronce", min: 0, max: 399, ring: "from-amber-700 to-amber-500", text: "text-amber-100" },
-  { key: "plata", name: "Plata", min: 400, max: 799, ring: "from-slate-400 to-slate-200", text: "text-slate-900" },
-  { key: "oro", name: "Oro", min: 800, max: 1199, ring: "from-yellow-500 to-yellow-300", text: "text-yellow-950" },
-  { key: "platino", name: "Platino", min: 1200, max: 1599, ring: "from-cyan-400 to-teal-200", text: "text-cyan-950" },
-  { key: "elite", name: "Élite", min: 1600, max: 1999, ring: "from-fuchsia-500 to-violet-400", text: "text-white" },
-  { key: "leyenda", name: "Leyenda", min: 2000, max: 99999, ring: "from-[#00703a] to-[#2D8E5C]", text: "text-[#014F2A]" },
+  { key: "bronce", name: "Bronce", min: 0, max: 399, hex: "#92400E", hexLight: "#C2670E", ring: "from-[#92400E] to-[#C2670E]", text: "text-amber-100" },
+  { key: "plata", name: "Plata", min: 400, max: 799, hex: "#6B7280", hexLight: "#9CA3AF", ring: "from-[#6B7280] to-[#9CA3AF]", text: "text-slate-900" },
+  { key: "oro", name: "Oro", min: 800, max: 1199, hex: "#CA8A04", hexLight: "#F5C542", ring: "from-[#CA8A04] to-[#F5C542]", text: "text-yellow-950" },
+  { key: "platino", name: "Platino", min: 1200, max: 1599, hex: "#0E7490", hexLight: "#22D3EE", ring: "from-[#0E7490] to-[#22D3EE]", text: "text-cyan-950" },
+  { key: "elite", name: "Élite", min: 1600, max: 1999, hex: "#7C3AED", hexLight: "#A78BFA", ring: "from-[#7C3AED] to-[#A78BFA]", text: "text-white" },
+  { key: "leyenda", name: "Leyenda", min: 2000, max: 99999, hex: "#00703a", hexLight: "#2D8E5C", ring: "from-[#00703a] to-[#2D8E5C]", text: "text-[#014F2A]" },
 ];
 
 const getDivision = (points) => {
@@ -814,17 +817,21 @@ const BirdixCard = ({ card, selected, used, onClick, size = "md", showDesc = fal
 /* ---------- TabBar ---------- */
 const TABS = [
   { id: "home", label: "Inicio", icon: Home },
-  { id: "matches", label: "Partidas", icon: Swords },
-  { id: "cards", label: "Cartas", icon: Layers },
   { id: "ranking", label: "Ranking", icon: Trophy },
   { id: "profile", label: "Perfil", icon: User },
 ];
 
-const TabBar = ({ active, onChange }) => (
-  <nav className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
+/* Estados de navegación alcanzables desde dentro de una de las 3 pestañas
+   (Crear partida desde Inicio, Cartas desde la selección de mazo) — no
+   llevan icono propio en la barra, per DESIGN.md: "un único menú fijo,
+   sin excepciones ni patrón distinto". */
+const isTabBarTab = (tab) => TABS.some((t) => t.id === tab);
+
+const TabBar = ({ active, onChange, stacked = false }) => (
+  <nav className={`fixed inset-x-0 z-30 pointer-events-none ${stacked ? "bottom-[76px]" : "bottom-0"}`}>
     <div className="mx-auto max-w-[900px] px-3 pb-3 pointer-events-auto">
-      <div className="bg-white/90 backdrop-blur-xl rounded-3xl ring-1 ring-slate-200 shadow-xl shadow-slate-900/5 px-1.5 py-1.5">
-        <div className="grid grid-cols-5 gap-1">
+      <div className="bg-white/90 backdrop-blur-xl rounded-3xl ring-1 ring-slate-200 shadow-surface px-1.5 py-1.5">
+        <div className="grid grid-cols-3 gap-1">
           {TABS.map((t) => {
             const Icon = t.icon;
             const isActive = active === t.id;
@@ -951,7 +958,11 @@ const AuthScreen = ({ onLogin, onRegister }) => {
         <button onClick={() => setMode("welcome")} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
           <ArrowLeft size={18} />
         </button>
-        <Logo size="sm" />
+        {/* Isotipo, no wordmark — este formulario es flujo operativo, no la
+            bienvenida de marketing. Ver "Uso del logo" en DESIGN.md. */}
+        <div className="h-8 w-8 rounded-[10px] overflow-hidden shadow-surface flex-shrink-0">
+          <BirdixLogo variant="isotipo" height={32} />
+        </div>
         <div className="w-10" />
       </header>
 
@@ -1122,10 +1133,15 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
     <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#FBFAF6] px-4 sm:px-6 pt-6 pb-6 space-y-6 transition-colors duration-300">
       {/* Header personal */}
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[#00703a] text-[11px] uppercase tracking-[0.18em] font-black">Birdix Clubhouse</p>
-          <h1 className="text-[30px] font-black tracking-tight text-slate-950 leading-tight mt-1">Hola, {firstName}</h1>
-          <p className="text-slate-500 text-[13px] font-semibold mt-1">Tu ronda competitiva empieza aquí.</p>
+        <div className="flex items-start gap-2.5">
+          <div className="h-8 w-8 rounded-[10px] overflow-hidden shadow-surface flex-shrink-0 mt-0.5">
+            <BirdixLogo variant="isotipo" height={32} />
+          </div>
+          <div>
+            <p className="text-[#00703a] text-[11px] uppercase tracking-[0.18em] font-black">Birdix Clubhouse</p>
+            <h1 className="text-[30px] font-black tracking-tight text-slate-950 leading-tight mt-1">Hola, {firstName}</h1>
+            <p className="text-slate-500 text-[13px] font-semibold mt-1">Tu ronda competitiva empieza aquí.</p>
+          </div>
         </div>
         <button onClick={onGoProfile} className="rounded-full active:scale-95 transition-transform duration-150">
           <Avatar initials={firstName.charAt(0).toUpperCase()} />
@@ -1144,7 +1160,7 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
             <div>
               <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Ranking global</p>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-[52px] font-black tracking-tight text-slate-950 leading-none">{displayRanking}</span>
+                <span className="font-display text-[56px] tracking-tight text-slate-950 leading-none">{displayRanking}</span>
                 <span className="text-slate-500 text-sm font-black uppercase tracking-wider">pts</span>
               </div>
             </div>
@@ -1170,7 +1186,10 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
 
       {/* CTAs */}
       <div className="grid grid-cols-1 gap-3">
-        <button onClick={onCreate} className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.22)] flex items-center justify-between active:scale-[0.985] transition-all duration-200">
+        <button
+          onClick={onCreate}
+          className="glow-behind w-full rounded-[24px] bg-gradient-to-br from-[#2D8E5C] via-[#00703a] to-[#014F2A] px-5 py-4 text-white shadow-glow-green flex items-center justify-between active:scale-[0.985] transition-all duration-200"
+        >
           <span className="flex items-center gap-2 font-black text-[15px]"><Plus size={18} strokeWidth={2.5} />Crear partida</span>
           <ArrowRight size={18} strokeWidth={2.5} />
         </button>
@@ -1198,21 +1217,21 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
 
       {/* Acceso rápido */}
       <div className="grid grid-cols-2 gap-3">
-        <button onClick={onGoCards} className="text-left rounded-[28px] bg-gradient-to-br from-slate-950 to-slate-800 text-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-white/10 active:scale-[0.99] transition-all duration-200">
+        <button onClick={onGoCards} className="text-left rounded-[28px] bg-gradient-to-br from-slate-950 to-slate-800 text-white p-4 shadow-surface ring-1 ring-white/10 active:scale-[0.99] transition-all duration-200">
           <div className="flex items-center justify-between">
             <Layers size={22} strokeWidth={2.5} />
             <ChevronRight size={18} className="opacity-70" />
           </div>
           <p className="mt-6 text-[11px] uppercase tracking-wider text-[#6EE7B7] font-semibold">Mi mazo</p>
-          <p className="text-base font-black">{CARDS.length} cartas</p>
+          <p className="font-display text-[19px]">{CARDS.length} cartas</p>
         </button>
-        <button onClick={onGoProfile} className="text-left rounded-[28px] bg-white ring-1 ring-black/5 p-4 shadow-sm active:scale-[0.99] transition-all duration-200">
+        <button onClick={onGoProfile} className="text-left rounded-[28px] bg-white ring-1 ring-black/5 shadow-surface p-4 active:scale-[0.99] transition-all duration-200">
           <div className="flex items-center justify-between">
             <User size={22} strokeWidth={2.5} className="text-slate-700" />
             <ChevronRight size={18} className="text-slate-400" />
           </div>
           <p className="mt-6 text-[11px] uppercase tracking-wider text-[#00703a] font-semibold">Mi perfil</p>
-          <p className="text-base font-black text-slate-900">Estadísticas</p>
+          <p className="font-display text-[19px] text-slate-900">Estadísticas</p>
         </button>
       </div>
     </div>
@@ -1290,6 +1309,7 @@ const MatchesScreen = ({
   onCreateMatch,
   onSelectCards,
   onOpenActive,
+  onGoCards,
 }) => {
   const [view, setView] = useState("list"); // list | create | cards
   const [draft, setDraft] = useState({
@@ -1581,10 +1601,12 @@ const MatchesScreen = ({
 
   /* ----- Vista selección de cartas ----- */
   if (view === "cards") {
+    const deckComplete = cardPicks.length === required;
+    const deckRingDeg = Math.max(0, Math.min(360, (cardPicks.length / required) * 360));
     return (
-      <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#FAF8F1] px-4 sm:px-6 pt-6 pb-6 space-y-5 transition-colors duration-300">
+      <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-gradient-to-b from-[#F3F4F6] via-[#FAF8F1] to-[#FAF8F1] px-4 sm:px-6 pt-6 pb-6 space-y-5 transition-colors duration-300">
         <div className="flex items-center gap-3">
-          <button onClick={() => setView("create")} className="h-10 w-10 rounded-full bg-white ring-1 ring-black/5 shadow-sm flex items-center justify-center active:scale-95 transition">
+          <button onClick={() => setView("create")} className="h-10 w-10 rounded-full bg-white shadow-surface flex items-center justify-center active:scale-95 transition">
             <ArrowLeft size={18} />
           </button>
           <div>
@@ -1594,18 +1616,25 @@ const MatchesScreen = ({
           </div>
         </div>
 
-        <Card className="p-5 rounded-[30px] bg-white/90 ring-black/5 shadow-[0_18px_45px_rgba(120,85,25,0.08)]">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-[11px] uppercase tracking-[0.16em] font-black text-slate-500">Selección</span>
-              <p className="text-[18px] font-black text-slate-950 leading-tight">{cardPicks.length} / {required} cartas</p>
+        <div className={deckComplete ? "glow-behind" : ""} style={deckComplete ? { "--glow-color": "var(--glow-green)", borderRadius: 30 } : undefined}>
+          <Card className="p-5 rounded-[30px] bg-white ring-black/5 shadow-surface">
+            <div className="flex items-center gap-4">
+              <div
+                className="relative h-16 w-16 flex-shrink-0 rounded-full flex items-center justify-center transition-all duration-300"
+                style={{ background: `conic-gradient(${deckComplete ? "#00703a" : "#CA8A04"} ${deckRingDeg}deg, #E5E7EB ${deckRingDeg}deg 360deg)` }}
+              >
+                <div className="h-[52px] w-[52px] rounded-full bg-white flex items-center justify-center">
+                  <p className="font-display text-[17px] text-slate-950 leading-none">{cardPicks.length}/{required}</p>
+                </div>
+              </div>
+              <div className="flex-1">
+                <span className="text-[11px] uppercase tracking-[0.16em] font-black text-slate-500">Selección</span>
+                <p className="text-[14px] font-bold text-slate-900 mt-0.5">{deckComplete ? "Mazo completo" : `Elige ${required - cardPicks.length} más`}</p>
+                <div className="mt-2"><Pill tone="emerald" icon={EyeOff}>Privadas</Pill></div>
+              </div>
             </div>
-            <Pill tone="emerald" icon={EyeOff}>Privadas</Pill>
-          </div>
-          <div className="mt-4">
-            <ProgressBar value={cardPicks.length} max={required} />
-          </div>
-        </Card>
+          </Card>
+        </div>
 
         <div className="grid grid-cols-2 gap-3.5">
           {CARDS.map((c) => (
@@ -1624,9 +1653,16 @@ const MatchesScreen = ({
           ))}
         </div>
 
-        <button onClick={() => setCardModal(CARDS[0])} className="text-[#00703a] text-[13px] font-black text-center w-full pt-1 active:scale-[0.99] transition">
-          ¿Cómo funcionan las cartas?
-        </button>
+        <div className="flex items-center justify-center gap-4 pt-1">
+          <button onClick={() => setCardModal(CARDS[0])} className="text-[#00703a] text-[13px] font-black active:scale-[0.99] transition">
+            ¿Cómo funcionan las cartas?
+          </button>
+          {onGoCards && (
+            <button onClick={onGoCards} className="text-slate-500 text-[13px] font-black active:scale-[0.99] transition">
+              Ver las {CARDS.length} cartas
+            </button>
+          )}
+        </div>
 
         <div className="sticky bottom-24 pt-2">
           <button
@@ -1644,6 +1680,23 @@ const MatchesScreen = ({
     );
   }
 };
+
+const ConfirmDialog = ({ title, message, confirmLabel = "Salir", cancelLabel = "Seguir jugando", onConfirm, onCancel }) => (
+  <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
+    <div className="bg-white rounded-3xl w-full max-w-[360px] p-5 shadow-surface" onClick={(e) => e.stopPropagation()}>
+      <h3 className="font-black text-slate-900 text-lg mb-1.5">{title}</h3>
+      <p className="text-[13px] text-slate-500 mb-5">{message}</p>
+      <div className="flex flex-col gap-2">
+        <button onClick={onConfirm} className="w-full rounded-2xl bg-[#D67560] text-white font-bold text-[14px] py-3 active:scale-[0.98] transition">
+          {confirmLabel}
+        </button>
+        <button onClick={onCancel} className="w-full rounded-2xl bg-slate-100 text-slate-900 font-bold text-[14px] py-3 active:scale-[0.98] transition">
+          {cancelLabel}
+        </button>
+      </div>
+    </div>
+  </div>
+);
 
 const CardModal = ({ card, onClose }) => {
   const Icon = card.icon;
@@ -1679,7 +1732,7 @@ const CardModal = ({ card, onClose }) => {
    11 · SCREEN · CARDS (mazo completo)
    --------------------------------------------------------------------------*/
 
-const CardsScreen = () => {
+const CardsScreen = ({ onBack }) => {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("all");
 
@@ -1691,6 +1744,11 @@ const CardsScreen = () => {
   return (
     <div className="space-y-5">
       <div>
+        {onBack && (
+          <button onClick={onBack} className="h-9 w-9 -ml-1 mb-2 rounded-full bg-white shadow-surface flex items-center justify-center text-slate-700">
+            <ArrowLeft size={18} />
+          </button>
+        )}
         <h1 className="text-[26px] font-black tracking-tight text-slate-900">Cartas Birdix</h1>
         <p className="text-[13px] text-slate-500 mt-1">Tu mazo oficial. {CARDS.length} cartas. Estrategia infinita.</p>
       </div>
@@ -1752,7 +1810,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
     <div className="space-y-5">
       <h1 className="text-[26px] font-black tracking-tight text-slate-900">Ranking</h1>
 
-      <Card>
+      <Card className="shadow-surface">
         <div className={`p-5 bg-gradient-to-br ${division.ring} ${division.text} rounded-3xl`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -1761,7 +1819,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
             </div>
             <span className="font-bold text-[12px]">#{position.toLocaleString("es-ES")}</span>
           </div>
-          <p className="mt-5 text-[44px] font-black leading-none">{displayRanking}</p>
+          <p className="font-display text-[48px] leading-none mt-5">{displayRanking}</p>
           <p className="text-[12px] font-semibold opacity-80 mt-1">puntos de ranking</p>
           {nextDiv && (
             <div className="mt-5">
@@ -1777,9 +1835,38 @@ const RankingScreen = ({ profile, ranking, position }) => {
         </div>
       </Card>
 
+      {/* Ladder de divisiones — dónde estás en el recorrido completo del Rango */}
+      <Card className="p-4 shadow-surface">
+        <div className="flex items-center justify-between">
+          {DIVISIONS.map((d, i) => {
+            const isCurrent = d.key === division.key;
+            const isPast = displayRanking > d.max;
+            return (
+              <React.Fragment key={d.key}>
+                {i > 0 && <div className="flex-1 h-px mx-1" style={{ background: isPast || isCurrent ? DIVISIONS[i - 1].hex : "#E5E7EB" }} />}
+                <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                  <div
+                    className="rounded-full flex items-center justify-center transition-all"
+                    style={{
+                      width: isCurrent ? 34 : 22,
+                      height: isCurrent ? 34 : 22,
+                      background: isCurrent || isPast ? d.hex : "#E5E7EB",
+                      boxShadow: isCurrent ? `0 0 0 4px ${d.hex}22` : "none",
+                    }}
+                  >
+                    {isCurrent && <Crown size={14} className="text-white" strokeWidth={2.5} />}
+                  </div>
+                  <p className={`text-[8px] font-black uppercase tracking-wide ${isCurrent ? "text-slate-900" : "text-slate-400"}`}>{d.name}</p>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </Card>
+
       <div>
         <SectionTitle>Top jugadores</SectionTitle>
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden shadow-surface">
           {FAKE_TOP.map((p, i) => (
             <div key={p.name} className={`flex items-center gap-3 p-3.5 ${i < FAKE_TOP.length - 1 ? "border-b border-slate-100" : ""}`}>
               <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] ${i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-100 text-slate-700" : i === 2 ? "bg-orange-100 text-orange-700" : "bg-slate-50 text-slate-500"}`}>
@@ -1791,7 +1878,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
                 <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
               </div>
               <div className="text-right">
-                <p className="font-black text-slate-900 text-[15px]">{p.points}</p>
+                <p className="font-display text-[17px] text-slate-900">{p.points}</p>
                 <span className={`text-[11px] font-bold inline-flex items-center gap-0.5 ${p.change > 0 ? "text-[#00703a]" : p.change < 0 ? "text-[#A8543F]" : "text-slate-500"}`}>
                   {p.change > 0 ? <TrendingUp size={11} /> : p.change < 0 ? <TrendingDown size={11} /> : <Minus size={11} />}
                   {Math.abs(p.change)}
@@ -1804,7 +1891,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
 
       <div>
         <SectionTitle>Cerca de ti</SectionTitle>
-        <Card className="overflow-hidden">
+        <Card className="overflow-hidden shadow-surface">
           {around.map((p, i) => (
             <div key={i} className={`flex items-center gap-3 p-3.5 ${p.you ? "bg-[#E6F4ED]" : ""} ${i < around.length - 1 ? "border-b border-slate-100" : ""}`}>
               <div className="h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] bg-slate-50 text-slate-500">
@@ -1815,7 +1902,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
                 <p className={`font-bold text-[14px] ${p.you ? "text-[#014F2A]" : "text-slate-900"}`}>{p.you ? `${p.name} (tú)` : p.name}</p>
                 <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
               </div>
-              <p className="font-black text-slate-900 text-[15px]">{p.points}</p>
+              <p className="font-display text-[17px] text-slate-900">{p.points}</p>
             </div>
           ))}
         </Card>
@@ -1830,6 +1917,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
 
 const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
   const displayRanking = toRankingPoints(ranking);
+  const nextDivision = getNextDivision(displayRanking);
   const wins = matches.filter((m) => m.result === "win").length;
   const losses = matches.filter((m) => m.result === "loss").length;
   const draws = matches.filter((m) => m.result === "draw").length;
@@ -1851,6 +1939,7 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
 
   const initials = (profile?.name || "?").split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase();
   const division = getDivision(displayRanking);
+  const divisionProgress = nextDivision ? ((displayRanking - division.min) / (nextDivision.min - division.min)) * 100 : 100;
 
   return (
     <div className="space-y-5">
@@ -1861,16 +1950,19 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
         </button>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-5 shadow-surface">
         <div className="flex items-center gap-4">
-          <Avatar initials={initials} size="lg" />
+          <div className="relative h-16 w-16 flex-shrink-0 rounded-full flex items-center justify-center" style={{ background: `conic-gradient(${division.hex} 0deg 320deg, #E5E7EB 320deg 360deg)` }}>
+            <div className="h-[52px] w-[52px] rounded-full bg-white flex items-center justify-center">
+              <Avatar initials={initials} size="md" />
+            </div>
+          </div>
           <div className="flex-1">
             <h2 className="font-black text-slate-900 text-xl leading-tight">{profile?.name}</h2>
             <p className="text-[13px] text-slate-500">{profile?.club}</p>
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-              <DivisionBadge points={displayRanking} compact />
-              <Pill tone="emerald" icon={Flag}>Birdix HCP {formatBirdixHcp(getProfileBirdixHcp(profile))}</Pill>
-              <Pill tone="slate">Inicial {normalizeHcp(profile?.hcp)}</Pill>
+              <span className="font-display text-[13px] px-2.5 py-1 rounded-full" style={{ background: `${division.hex}1a`, color: division.hex }}>{division.name}</span>
+              <Pill tone="slate">Hándicap Birdix {formatBirdixHcp(getProfileBirdixHcp(profile))}</Pill>
             </div>
           </div>
         </div>
@@ -1878,22 +1970,22 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
         <div className="mt-5 grid grid-cols-3 gap-2">
           <div className="bg-slate-50 rounded-2xl p-3 text-center">
             <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Ranking</p>
-            <p className="font-black text-slate-900 text-lg mt-0.5">{displayRanking}</p>
+            <p className="font-display text-[19px] text-slate-900 mt-0.5">{displayRanking}</p>
           </div>
           <div className="bg-slate-50 rounded-2xl p-3 text-center">
             <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Posición</p>
-            <p className="font-black text-slate-900 text-lg mt-0.5">#{position.toLocaleString("es-ES")}</p>
+            <p className="font-display text-[19px] text-slate-900 mt-0.5">#{position.toLocaleString("es-ES")}</p>
           </div>
           <div className="bg-slate-50 rounded-2xl p-3 text-center">
             <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Racha</p>
-            <p className="font-black text-slate-900 text-lg mt-0.5">{streak}🔥</p>
+            <p className="font-display text-[19px] text-slate-900 mt-0.5">{streak}🔥</p>
           </div>
         </div>
       </Card>
 
       <div>
         <SectionTitle>Estadísticas</SectionTitle>
-        <Card className="p-4">
+        <Card className="p-4 shadow-surface">
           <div className="grid grid-cols-4 gap-2 text-center">
             {[
               { label: "PJ", value: total },
@@ -1913,6 +2005,19 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
               <span className="font-bold text-slate-900 text-[13px]">{winRate}%</span>
             </div>
             <ProgressBar value={winRate} max={100} />
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+                {nextDivision ? `Progreso a ${nextDivision.name}` : "Máxima división"}
+              </span>
+              <span className="font-bold text-slate-900 text-[13px]">
+                {nextDivision ? `${nextDivision.min - displayRanking} pts` : "Leyenda"}
+              </span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${divisionProgress}%`, background: division.hex }} />
+            </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 text-[13px]">
             <div className="bg-slate-50 rounded-2xl p-3">
@@ -1960,21 +2065,22 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
    14 · SCREEN · STABLEFORD (registrar resultado hoyo por hoyo)
    --------------------------------------------------------------------------*/
 
-const ScoreInput = ({ label, value, onChange, min = 1, max = 12 }) => {
+const ScoreInput = ({ label, value, onChange, min = 1, max = 12, tone = "default" }) => {
   const hasValue = hasStrokeInput(value);
   const safeValue = hasValue ? clampNumber(value, min, max, min) : "";
   const stepBase = hasValue ? safeValue : min;
+  const primary = tone === "primary";
   return (
-    <div className="flex items-center justify-between bg-slate-50 rounded-2xl px-3 py-2.5 gap-3">
-      <span className="text-[12px] uppercase tracking-wider text-slate-500 font-semibold">{label}</span>
-      <div className="flex items-center gap-2 shrink-0">
+    <div className={`flex items-center justify-between rounded-2xl gap-3 ${primary ? "bg-[#E6F4ED] px-4 py-3.5 shadow-surface" : "bg-slate-50 px-3 py-2.5"}`}>
+      <span className={`uppercase tracking-wider font-semibold ${primary ? "text-[13px] text-[#014F2A] font-black" : "text-[12px] text-slate-500"}`}>{label}</span>
+      <div className={`flex items-center shrink-0 ${primary ? "gap-3" : "gap-2"}`}>
         <button
           type="button"
           aria-label={`Reducir ${label}`}
           onClick={() => onChange(clampNumber(stepBase - 1, min, max, min))}
-          className="h-9 w-9 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center text-slate-700 active:scale-95 transition"
+          className={`rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center text-slate-700 active:scale-95 transition ${primary ? "h-11 w-11" : "h-9 w-9"}`}
         >
-          <Minus size={14} strokeWidth={3} />
+          <Minus size={primary ? 16 : 14} strokeWidth={3} />
         </button>
         <input
           type="number"
@@ -1983,15 +2089,15 @@ const ScoreInput = ({ label, value, onChange, min = 1, max = 12 }) => {
           max={max}
           value={safeValue}
           onChange={(e) => onChange(e.target.value === "" ? "" : clampNumber(e.target.value, min, max, stepBase))}
-          className="h-9 w-12 rounded-xl bg-white ring-1 ring-slate-200 text-center font-black text-slate-900 text-lg outline-none focus:ring-2 focus:ring-[#00703a]"
+          className={`rounded-xl bg-white ring-1 ring-slate-200 text-center outline-none focus:ring-2 focus:ring-[#00703a] ${primary ? "h-11 w-16 font-display text-[24px] text-slate-950" : "h-9 w-12 font-black text-lg text-slate-900"}`}
         />
         <button
           type="button"
           aria-label={`Aumentar ${label}`}
           onClick={() => onChange(clampNumber(stepBase + 1, min, max, min))}
-          className="h-9 w-9 rounded-full bg-[#00703a] text-white flex items-center justify-center active:scale-95 transition"
+          className={`rounded-full bg-[#00703a] text-white flex items-center justify-center active:scale-95 transition ${primary ? "h-11 w-11" : "h-9 w-9"}`}
         >
-          <Plus size={14} strokeWidth={3} />
+          <Plus size={primary ? 16 : 14} strokeWidth={3} />
         </button>
       </div>
     </div>
@@ -2277,7 +2383,7 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
       </header>
 
       <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
-        <Card className="p-5 space-y-4 ring-slate-200 shadow-sm">
+        <Card className="p-5 space-y-4 ring-slate-200 shadow-surface">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Tarjeta del hoyo {hole + 1}</span>
             <div className="flex items-center gap-1.5">
@@ -2319,7 +2425,7 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
           </button>
         </Card>
 
-        <Card className="p-5 ring-slate-200 shadow-sm">
+        <Card className="p-5 ring-slate-200 shadow-surface">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Carta del hoyo</span>
             <button onClick={() => setShowCardPicker(true)} className="rounded-full bg-[#E6F4ED] px-3 py-1.5 text-[#00703a] text-[12px] font-black active:scale-95 transition">{current.cardId ? "Cambiar" : "Elegir"}</button>
@@ -2388,7 +2494,7 @@ const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, 
           )}
         </Card>
 
-        <Card className="p-3 ring-slate-200 shadow-sm">
+        <Card className="p-3 ring-slate-200 shadow-surface">
           <div className="grid grid-cols-9 gap-1 text-center">
             {holes.slice(0, Math.min(9, total)).map((h, i) => (
               <button key={i} onClick={() => setHole(i)} className={`rounded-xl py-1.5 transition active:scale-95 ${i === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}>
@@ -2497,10 +2603,18 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
   );
   const [showCardPicker, setShowCardPicker] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [revealCard, setRevealCard] = useState(null);
+  const [showHoleDetail, setShowHoleDetail] = useState(false);
 
   useEffect(() => {
     setHole((h) => clampNumber(h, 0, total - 1, 0));
   }, [total]);
+
+  useEffect(() => {
+    if (!revealCard) return;
+    const t = setTimeout(() => setRevealCard(null), 1100);
+    return () => clearTimeout(t);
+  }, [revealCard]);
 
   const usedCardIds = holes.map((h, i) => (i === hole ? null : h.cardId)).filter(Boolean);
 
@@ -2640,52 +2754,111 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
   };
 
   return (
-    <div className="min-h-screen bg-[#F7FAF7] flex flex-col">
-      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-[#F7FAF7]/95 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center active:scale-95 transition">
+    <div className="min-h-screen bg-gradient-to-b from-[#F3F4F6] via-[#F7FAF7] to-white flex flex-col">
+      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-gradient-to-b from-[#F3F4F6] to-[#F3F4F6]/85 backdrop-blur-xl">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white shadow-surface flex items-center justify-center active:scale-95 transition">
             <X size={18} />
           </button>
           <div className="text-center">
             <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida en curso</p>
-            <p className="font-black text-slate-950 text-[17px] leading-tight mt-0.5">vs {rivalName}</p>
-            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Birdix HCP {formatBirdixHcp(playerMatchHcp)} vs {formatBirdixHcp(rivalMatchHcp)}</p>
+            <p className="font-black text-slate-950 text-[16px] leading-tight mt-0.5">vs {rivalName}</p>
           </div>
           <div className="h-10 w-10" />
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 items-stretch">
-          <div className="bg-white rounded-[22px] ring-1 ring-[#00703a]/15 shadow-sm p-3 text-center">
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Tú</p>
-            <p className="font-black text-[#00703a] text-2xl leading-none mt-1">{playerTotal}</p>
-            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
-            <p className="text-[10px] text-slate-500 font-semibold mt-1">B-HCP {formatBirdixHcp(playerMatchHcp)}</p>
+
+        {/* Marcador unificado — un único objeto, no 3 cajas sueltas */}
+        <div className="rounded-[26px] bg-gradient-to-br from-slate-900 to-slate-950 shadow-[0_20px_44px_rgba(15,23,42,0.28)] px-1 py-4 flex items-stretch">
+          <div className="flex-1 text-center px-2">
+            <p className="text-[10px] uppercase tracking-wider text-[#6EE7B7] font-bold">Tú</p>
+            <p className="font-display text-[30px] text-white leading-none mt-1.5">{playerTotal}</p>
+            <p className="text-[9px] text-white/35 font-bold mt-1">HCP {formatBirdixHcp(playerMatchHcp)}</p>
           </div>
-          <div className="text-center rounded-[22px] bg-slate-950 text-white px-2.5 py-3 shadow-md shadow-slate-900/10">
-            <p className="text-[10px] uppercase tracking-wider text-white/55 font-semibold">Hoyo</p>
-            <p className="font-black text-2xl leading-none mt-1">{hole + 1}<span className="text-sm text-white/45">/{total}</span></p>
-            <p className="text-[10px] text-[#6EE7B7] font-bold mt-1">Index {cur.strokeIndex}</p>
+          <div className="w-px bg-white/10 my-1" />
+          <div className="flex-[1.3] text-center px-2 flex flex-col items-center justify-center">
+            <div className="flex items-center gap-1 text-white/40">
+              <Flag size={10} />
+              <p className="text-[9px] uppercase tracking-widest font-bold">Hoyo</p>
+            </div>
+            <p className="font-display text-[34px] text-white leading-none mt-0.5">
+              {hole + 1}<span className="text-white/30 text-[15px]">/{total}</span>
+            </p>
+            <p className="text-[9px] text-white/40 font-semibold mt-1">Par {current.par} · Índice {cur.strokeIndex}</p>
           </div>
-          <div className="bg-white rounded-[22px] ring-1 ring-[#A8543F]/15 shadow-sm p-3 text-center">
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{rivalName.split(" ")[0]}</p>
-            <p className="font-black text-[#A8543F] text-2xl leading-none mt-1">{rivalTotal}</p>
-            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
-            <p className="text-[10px] text-slate-500 font-semibold mt-1">B-HCP {formatBirdixHcp(rivalMatchHcp)}</p>
+          <div className="w-px bg-white/10 my-1" />
+          <div className="flex-1 text-center px-2">
+            <p className="text-[10px] uppercase tracking-wider text-[#F4B2A6] font-bold">{rivalName.split(" ")[0]}</p>
+            <p className="font-display text-[30px] text-white leading-none mt-1.5">{rivalTotal}</p>
+            <p className="text-[9px] text-white/35 font-bold mt-1">HCP {formatBirdixHcp(rivalMatchHcp)}</p>
           </div>
         </div>
       </header>
 
       <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
-        <Card className="p-5 space-y-4 ring-slate-200 shadow-sm">
+        {/* Puntos del hoyo — el mini-resultado de cada hoyo, con el mismo lenguaje
+            de resplandor que la pantalla de Resultado final: es un pago emocional
+            en miniatura, se repite cada hoyo, se lo gana el mismo tratamiento. */}
+        <div className="glow-behind rounded-[30px]" style={{ "--glow-color": "var(--glow-green)" }}>
+          <Card className="p-6 rounded-[30px] bg-white ring-black/5 shadow-surface text-center">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Puntos del hoyo</span>
+              <button onClick={() => setShowHoleDetail((v) => !v)} className="flex items-center gap-1 text-[11px] text-slate-400 font-bold active:scale-95 transition">
+                Detalle <ChevronRight size={12} className={`transition-transform ${showHoleDetail ? "rotate-90" : ""}`} />
+              </button>
+            </div>
+            <div className="flex items-center justify-center gap-7 mt-3">
+              <div>
+                <p className="font-display text-[64px] text-[#00703a] leading-none">{cur?.playerHole}</p>
+                <p className="text-[11px] text-slate-500 font-bold mt-1.5">Tú</p>
+              </div>
+              <p className="font-display text-[26px] text-slate-300 mt-2">–</p>
+              <div>
+                <p className="font-display text-[64px] text-[#A8543F] leading-none">{cur?.rivalHole}</p>
+                <p className="text-[11px] text-slate-500 font-bold mt-1.5">{rivalName.split(" ")[0]}</p>
+              </div>
+            </div>
+
+            {cur?.note && (
+              <div className="mt-4 inline-flex mx-auto rounded-full bg-[#E6F4ED] px-3.5 py-1.5 text-[12px] text-[#014F2A] font-bold items-center gap-1.5">
+                <Sparkles size={12} /> {cur.note}
+              </div>
+            )}
+
+            {showHoleDetail && (
+              <div className="mt-4 grid grid-cols-2 gap-2.5 text-left">
+                <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Tú</p>
+                  <p className="text-[11px] text-slate-600 mt-1">
+                    {cur.playerHasScore ? `bruto ${cur.strokes} · neto ${cur.playerNet}${cur.playerHcpStroke ? ` · +${cur.playerHcpStroke} hcp` : ""}` : "Sin golpes"}
+                  </p>
+                  {cur.playerCardDelta ? <p className="text-[11px] text-[#00703a] font-bold mt-0.5">carta {cur.playerCardDelta >= 0 ? "+" : ""}{cur.playerCardDelta}</p> : null}
+                </div>
+                <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Rival</p>
+                  <p className="text-[11px] text-slate-600 mt-1">
+                    {cur.rivalHasScore ? `bruto ${cur.rivalStrokes} · neto ${cur.rivalNet}${cur.rivalHcpStroke ? ` · +${cur.rivalHcpStroke} hcp` : ""}` : "Sin golpes"}
+                  </p>
+                  {cur.rivalCardDelta ? <p className="text-[11px] text-[#A8543F] font-bold mt-0.5">carta {cur.rivalCardDelta >= 0 ? "+" : ""}{cur.rivalCardDelta}</p> : null}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <Card className="p-5 space-y-3 ring-slate-200 shadow-surface">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Tarjeta del hoyo {hole + 1}</span>
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Golpes del hoyo</span>
             <div className="flex items-center gap-1.5">
-              <Pill tone="slate" icon={Flag}>Par {current.par}</Pill>
-              <Pill tone="slate">Index {cur.strokeIndex}</Pill>
+              <button
+                onClick={() => updateHole({ par: clampNumber(current.par - 1, 3, 6, 4) })}
+                className="text-[11px] font-bold text-slate-500 bg-slate-50 rounded-full px-2.5 py-1 active:scale-95 transition"
+              >
+                Par {current.par}
+              </button>
             </div>
           </div>
 
-          <ScoreInput label="Par" value={current.par} onChange={(v) => updateHole({ par: v })} min={3} max={6} />
-          <ScoreInput label="Tus golpes" value={current.strokes} onChange={(v) => updateHole({ strokes: v })} />
+          <ScoreInput label="Tus golpes" value={current.strokes} onChange={(v) => updateHole({ strokes: v })} tone="primary" />
           <ScoreInput label="Golpes rival" value={current.rivalStrokes} onChange={(v) => updateHole({ rivalStrokes: v })} />
 
           {(cur.playerHcpStroke > 0 || cur.rivalHcpStroke > 0) && (
@@ -2713,108 +2886,88 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
           </button>
         </Card>
 
-        <Card className="p-5 ring-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Carta del hoyo</span>
-            <button onClick={() => setShowCardPicker(true)} className="rounded-full bg-[#E6F4ED] px-3 py-1.5 text-[#00703a] text-[12px] font-black active:scale-95 transition">{current.cardId ? "Cambiar" : "Elegir"}</button>
-          </div>
-          {current.cardId ? (
-            (() => {
-              const c = CARDS.find((x) => x.id === current.cardId);
-              if (!c) {
-                return (
-                  <div className="mt-3 rounded-[22px] bg-slate-50 ring-1 ring-slate-100 p-3 flex items-center justify-between">
-                    <p className="text-[12px] text-slate-500 font-semibold">Esta carta ya no está disponible.</p>
-                    <button onClick={() => updateHole({ cardId: null })} className="text-[#00703a] text-[12px] font-bold">Quitar</button>
-                  </div>
-                );
-              }
-              const Icon = c.icon;
+        {current.cardId ? (
+          (() => {
+            const c = CARDS.find((x) => x.id === current.cardId);
+            if (!c) {
               return (
-                <div className={`mt-3 ${c.accent} rounded-[22px] p-3.5 ring-1 ring-black/5 flex items-center gap-3`}>
-                  <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center"><Icon size={18} strokeWidth={2.5} /></div>
-                  <div className="flex-1">
-                    <p className="font-black text-[15px] leading-tight">{c.name}</p>
-                    <p className="text-[11px] opacity-80">{c.short}</p>
-                  </div>
-                  <button onClick={() => updateHole({ cardId: null })} className="h-8 w-8 rounded-full bg-white/80 shadow-sm flex items-center justify-center active:scale-95 transition"><X size={14} /></button>
+                <div className="rounded-[22px] bg-white ring-1 ring-slate-200 shadow-surface p-3.5 flex items-center justify-between">
+                  <p className="text-[12px] text-slate-500 font-semibold">Esta carta ya no está disponible.</p>
+                  <button onClick={() => updateHole({ cardId: null })} className="text-[#00703a] text-[12px] font-bold">Quitar</button>
                 </div>
               );
-            })()
-          ) : (
-            <button onClick={() => setShowCardPicker(true)} className="mt-3 w-full rounded-[22px] bg-slate-50 ring-1 ring-slate-100 px-4 py-4 text-left active:scale-[0.99] transition">
-              <p className="text-[13px] font-black text-slate-900">Sin carta seleccionada</p>
-              <p className="text-[12px] text-slate-500 mt-0.5">Disponibles: {Math.max(0, selectedCardIds.length - usedCardIds.length)}</p>
-            </button>
-          )}
-        </Card>
+            }
+            const Icon = c.icon;
+            return (
+              <div className={`${c.accent} rounded-[22px] p-4 ring-1 ring-black/5 shadow-surface flex items-center gap-3`}>
+                <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center"><Icon size={18} strokeWidth={2.5} /></div>
+                <div className="flex-1">
+                  <p className="text-[9px] uppercase tracking-wider font-bold opacity-70">Carta jugada</p>
+                  <p className="font-black text-[15px] leading-tight">{c.name}</p>
+                </div>
+                <button onClick={() => setShowCardPicker(true)} className="text-[11px] font-black underline underline-offset-2 opacity-80">Cambiar</button>
+                <button onClick={() => updateHole({ cardId: null })} className="h-8 w-8 rounded-full bg-white/80 shadow-sm flex items-center justify-center active:scale-95 transition"><X size={14} /></button>
+              </div>
+            );
+          })()
+        ) : (
+          <button onClick={() => setShowCardPicker(true)} className="w-full rounded-[22px] bg-white ring-1 ring-dashed ring-[#D67560]/40 shadow-surface px-4 py-4 text-left active:scale-[0.99] transition flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-black text-slate-900">🃏 Jugar una carta</p>
+              <p className="text-[12px] text-slate-500 mt-0.5">{Math.max(0, selectedCardIds.length - usedCardIds.length)} disponibles este hoyo</p>
+            </div>
+            <ChevronRight size={16} className="text-[#D67560]" />
+          </button>
+        )}
 
-        <Card className="p-5 bg-slate-950 text-white ring-slate-900 shadow-lg shadow-slate-900/10">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-[#6EE7B7] font-black">Stableford neto</span>
-            <Info size={14} className="opacity-50" />
+        {/* Tu mazo — referencia rápida de qué te queda por jugar en la partida */}
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 px-1">Tu mazo</p>
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            {selectedCardIds.map((id) => {
+              const c = CARDS.find((x) => x.id === id);
+              if (!c) return null;
+              const Icon = c.icon;
+              const isCurrent = current.cardId === id;
+              const isUsed = usedCardIds.includes(id) && !isCurrent;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setShowCardPicker(true)}
+                  className={`flex-shrink-0 h-16 w-16 rounded-2xl flex flex-col items-center justify-center gap-1 transition active:scale-95 ${isUsed ? "bg-slate-100 opacity-50" : c.accent
+                    } ${isCurrent ? "ring-2 ring-[#00703a] shadow-glow-green" : "ring-1 ring-black/5 shadow-surface"}`}
+                >
+                  <Icon size={16} strokeWidth={2.5} />
+                  <p className="text-[8px] font-black text-center leading-tight px-1">{c.name}</p>
+                </button>
+              );
+            })}
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
-              <p className="text-[11px] uppercase tracking-wider text-[#6EE7B7] font-semibold">Tú</p>
-              <p className="font-black text-4xl leading-none mt-1">{cur?.playerHole}</p>
-              <p className="text-[11px] text-white/60 mt-1">
-                {cur.playerHasScore ? `gross ${cur.strokes} · net ${cur.playerNet}${cur.playerHcpStroke ? ` · HCP +${cur.playerHcpStroke}` : ""}` : "Introduce golpes"}
-              </p>
-              <p className="text-[11px] text-white/60 mt-1">
-                {cur.playerHasScore ? `base ${cur.playerBase}${cur.playerCardDelta ? ` · carta ${cur.playerCardDelta >= 0 ? "+" : ""}${cur.playerCardDelta}` : ""}` : "0 pts todavía"}
-              </p>
-            </div>
-            <div className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
-              <p className="text-[11px] uppercase tracking-wider text-[#F4B2A6] font-semibold">Rival</p>
-              <p className="font-black text-4xl leading-none mt-1">{cur?.rivalHole}</p>
-              <p className="text-[11px] text-white/60 mt-1">
-                {cur.rivalHasScore ? `gross ${cur.rivalStrokes} · net ${cur.rivalNet}${cur.rivalHcpStroke ? ` · HCP +${cur.rivalHcpStroke}` : ""}` : "Introduce golpes"}
-              </p>
-              <p className="text-[11px] text-white/60 mt-1">
-                {cur.rivalHasScore ? `base ${cur.rivalBase}${cur.rivalCardDelta ? ` · carta ${cur.rivalCardDelta >= 0 ? "+" : ""}${cur.rivalCardDelta}` : ""}` : "0 pts todavía"}
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 rounded-2xl bg-white/[0.06] px-3 py-2 text-[12px] text-white/75 font-bold">
-            Puntos Stableford del hoyo: {cur.playerHole} - {cur.rivalHole}
-          </div>
-          {cur?.note && (
-            <div className="mt-3 rounded-2xl bg-[#00703a]/20 px-3 py-2 text-[12px] text-[#6EE7B7] font-bold flex items-center gap-1.5">
-              <Sparkles size={12} /> {cur.note}
-            </div>
-          )}
-        </Card>
+        </div>
 
         {/* Mini scorecard */}
-        <Card className="p-3 ring-slate-200 shadow-sm">
-          <div className="grid grid-cols-9 gap-1 text-center">
-            {holes.slice(0, Math.min(9, total)).map((h, i) => (
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 px-1">Marcador de la ronda</p>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+            {holes.map((h, i) => (
               <button
                 key={i}
                 onClick={() => setHole(i)}
-                className={`rounded-xl py-1.5 transition active:scale-95 ${i === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}
+                className={`flex-shrink-0 h-14 w-11 rounded-2xl flex flex-col items-center justify-center transition active:scale-95 ${i === hole
+                  ? "bg-[#00703a] text-white shadow-glow-green"
+                  : h.cardId
+                    ? "bg-white ring-1 ring-[#D67560]/30 text-slate-700 shadow-surface"
+                    : "bg-white ring-1 ring-slate-100 text-slate-500 shadow-surface"
+                  }`}
               >
-                <p className="text-[10px] font-bold">Hoyo</p>
-                <p className="text-[13px] font-black">{i + 1}</p>
+                <p className={`text-[9px] font-bold ${i === hole ? "text-white/60" : "text-slate-400"}`}>{i + 1}</p>
+                <p className="text-[13px] font-display leading-none mt-0.5">
+                  {computed[i]?.playerHasScore ? computed[i].playerHole : "–"}
+                </p>
               </button>
             ))}
           </div>
-          {total > 9 && (
-            <div className="grid grid-cols-9 gap-1 text-center mt-1">
-              {holes.slice(9).map((h, i) => (
-                <button
-                  key={i + 9}
-                  onClick={() => setHole(i + 9)}
-                  className={`rounded-xl py-1.5 transition active:scale-95 ${i + 9 === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}
-                >
-                  <p className="text-[10px] font-bold">Hoyo</p>
-                  <p className="text-[13px] font-black">{i + 10}</p>
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
+        </div>
       </div>
 
       <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 z-30 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
@@ -2867,6 +3020,7 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
                     onClick={() => {
                       updateHole({ cardId: id });
                       setShowCardPicker(false);
+                      setRevealCard(c);
                     }}
                     size="sm"
                   />
@@ -2876,6 +3030,107 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
           </div>
         </div>
       )}
+
+      {revealCard && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/65 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setRevealCard(null)}
+        >
+          <div className="glow-behind" style={{ "--glow-color": "var(--glow-coral)" }}>
+            <div
+              className={`w-[180px] h-[240px] rounded-[26px] ${revealCard.accent} flex flex-col items-center justify-center text-center px-4 shadow-2xl`}
+              style={{ animation: "birdix-card-flip 380ms cubic-bezier(.2,.8,.2,1) both" }}
+            >
+              <div className="h-12 w-12 rounded-2xl bg-white/70 backdrop-blur flex items-center justify-center mb-3">
+                <revealCard.icon size={22} strokeWidth={2.5} />
+              </div>
+              <p className="font-display text-[19px] leading-tight">{revealCard.name}</p>
+              <p className="text-[10px] uppercase tracking-wider opacity-70 font-bold mt-1">{revealCard.type}</p>
+            </div>
+          </div>
+          <p className="absolute bottom-16 text-white/90 text-[13px] font-bold">¡Carta jugada! Toca para continuar.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
+   14.5 · SCREEN · RESULTADO (el pago emocional de la partida)
+   --------------------------------------------------------------------------*/
+
+const MatchResultScreen = ({ match, rankingBefore, rankingAfter, onDone }) => {
+  const [displayRank, setDisplayRank] = useState(rankingBefore);
+  const division = getDivision(rankingAfter);
+  const beforeDivision = getDivision(rankingBefore);
+  const promoted = division.key !== beforeDivision.key && rankingAfter > rankingBefore;
+  const relegated = division.key !== beforeDivision.key && rankingAfter < rankingBefore;
+  const delta = rankingAfter - rankingBefore;
+  const result = match?.result || "draw";
+  const resultLabel = result === "win" ? "Victoria" : result === "loss" ? "Derrota" : "Empate";
+  const resultColor = result === "win" ? "text-[#00703a]" : result === "loss" ? "text-[#A8543F]" : "text-slate-500";
+  const ringProgress = Math.max(4, Math.min(360, ((rankingAfter - division.min) / Math.max(1, division.max - division.min)) * 360));
+
+  useEffect(() => {
+    const from = rankingBefore;
+    const to = rankingAfter;
+    const duration = 900;
+    const start = performance.now();
+    let raf;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplayRank(Math.round(from + (to - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [rankingBefore, rankingAfter]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#F3F4F6] to-[#F9FAFB] flex flex-col">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center pb-28">
+        <div className="h-9 w-9 rounded-[10px] overflow-hidden shadow-surface mb-4">
+          <BirdixLogo variant="isotipo" height={36} />
+        </div>
+
+        <p className={`text-[11px] uppercase tracking-[0.18em] font-black ${resultColor}`}>
+          {result === "win" ? "🏆 " : ""}
+          {resultLabel}
+        </p>
+
+        <div className="glow-behind mt-5" style={{ "--glow-color": `${division.hex}55`, borderRadius: "9999px" }}>
+          <div
+            className="h-28 w-28 rounded-full flex items-center justify-center shadow-[0_18px_36px_rgba(0,0,0,0.15)]"
+            style={{ background: `conic-gradient(${division.hex} 0deg ${ringProgress}deg, #E5E7EB ${ringProgress}deg 360deg)` }}
+          >
+            <div className="h-[88px] w-[88px] rounded-full bg-white flex flex-col items-center justify-center">
+              <p className="font-display text-[16px] leading-none" style={{ color: division.hex }}>{division.name}</p>
+            </div>
+          </div>
+        </div>
+
+        <p className="font-display text-[52px] text-slate-950 leading-none mt-5">{displayRank}</p>
+        <span className={`mt-2 inline-block text-[13px] font-black px-3 py-1 rounded-full ${delta >= 0 ? "bg-[#E6F4ED] text-[#014F2A]" : "bg-[#FBEAE3] text-[#A8543F]"}`}>
+          {delta >= 0 ? "+" : ""}{delta} pts
+        </span>
+
+        {(promoted || relegated) && (
+          <p className="mt-3 text-[13px] font-bold text-slate-700">
+            {promoted ? `¡Subes a ${division.name}!` : `Bajas a ${division.name}`}
+          </p>
+        )}
+
+        <p className="mt-4 text-[13px] text-slate-500 font-semibold">
+          Stableford neto <span className="text-slate-900 font-black">{match?.playerPoints ?? 0} – {match?.rivalPoints ?? 0}</span>
+        </p>
+      </div>
+
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 px-5 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
+        <div className="max-w-[900px] mx-auto">
+          <PrimaryButton onClick={onDone} icon={Home}>Volver al inicio</PrimaryButton>
+        </div>
+      </div>
     </div>
   );
 };
@@ -2891,7 +3146,26 @@ export default function BirdixApp() {
   const [playing, setPlaying] = useState(false);
   const [toast, setToast] = useState(null);
   const [bootDone, setBootDone] = useState(false);
+  const [pendingExitTab, setPendingExitTab] = useState(null);
+  const [resultMatch, setResultMatch] = useState(null);
   const finishingRef = useRef(false);
+
+  /* La barra de navegación es la misma en las 7 pantallas, sin excepción
+     (DESIGN.md) — pero si hay una partida en curso, tocar una pestaña pide
+     confirmación antes de sacarte, en vez de perder el progreso sin avisar. */
+  const handleTabBarChange = (nextTab) => {
+    if (playing && state.activeMatch) {
+      setPendingExitTab(nextTab);
+      return;
+    }
+    setTab(nextTab);
+  };
+
+  const confirmExitMatch = () => {
+    setPlaying(false);
+    setTab(pendingExitTab);
+    setPendingExitTab(null);
+  };
 
   /* --- Hidratación inicial ---
      La sesión (quién eres) viene de Supabase Auth, de verdad. El perfil
@@ -3038,12 +3312,11 @@ export default function BirdixApp() {
   const handleFinishMatch = (match, rankingDelta) => {
     const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
     const finishedMatch = normalizeFinishedMatch(match, safeDelta);
+    const rankingBefore = toRankingPoints(state.ranking);
     finishingRef.current = true;
     dispatch({ type: "FINISH_MATCH", payload: { match: finishedMatch, rankingDelta: safeDelta } });
     setPlaying(false);
-    setTab("home");
-    const result = finishedMatch.result || "draw";
-    setToast(result === "win" ? `¡Victoria! ${safeDelta >= 0 ? "+" : ""}${safeDelta} pts` : result === "loss" ? `Derrota · ${safeDelta} pts` : "Empate");
+    setResultMatch({ match: finishedMatch, rankingBefore, rankingAfter: toRankingPoints(rankingBefore + safeDelta) });
   };
 
   const handleFindRival = () => setToast("Buscando rival…");
@@ -3107,7 +3380,36 @@ export default function BirdixApp() {
             onCancel={() => setPlaying(false)}
           />
         )}
+        <TabBar active={null} onChange={handleTabBarChange} stacked />
+        {pendingExitTab && (
+          <ConfirmDialog
+            title="¿Seguro?"
+            message="Perderás el progreso de esta partida si sales ahora."
+            confirmLabel="Salir de la partida"
+            cancelLabel="Seguir jugando"
+            onConfirm={confirmExitMatch}
+            onCancel={() => setPendingExitTab(null)}
+          />
+        )}
         <Toast message={toast} onDone={() => setToast(null)} />
+      </>
+    );
+  }
+
+  // Resultado — el pago emocional de la partida, antes de volver a Inicio
+  if (resultMatch) {
+    return (
+      <>
+        <MatchResultScreen
+          match={resultMatch.match}
+          rankingBefore={resultMatch.rankingBefore}
+          rankingAfter={resultMatch.rankingAfter}
+          onDone={() => {
+            setResultMatch(null);
+            setTab("home");
+          }}
+        />
+        <TabBar active="home" onChange={(t) => { setResultMatch(null); setTab(t); }} stacked />
       </>
     );
   }
@@ -3149,9 +3451,10 @@ export default function BirdixApp() {
             onOpenActive={() => {
               if (state.activeMatch) setPlaying(true);
             }}
+            onGoCards={() => setTab("cards")}
           />
         )}
-        {tab === "cards" && <CardsScreen />}
+        {tab === "cards" && <CardsScreen onBack={() => setTab("home")} />}
         {tab === "ranking" && (
           <RankingScreen profile={state.profile} ranking={state.ranking} position={state.position} />
         )}
@@ -3166,7 +3469,7 @@ export default function BirdixApp() {
         )}
       </main>
 
-      <TabBar active={tab} onChange={setTab} />
+      <TabBar active={isTabBarTab(tab) ? tab : null} onChange={handleTabBarChange} />
     </div>
   );
 }
