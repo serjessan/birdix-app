@@ -41,6 +41,20 @@ export const calculateEloDelta = (playerRank, rivalRank, result) => {
 };
 
 /**
+ * Wins/losses/streak tras una partida — gana +1 win y corta la racha de
+ * derrotas a 0, o al revés; un empate no toca ninguna de las 2 rachas.
+ */
+export const calculateStreakAfterMatch = (profile, result) => {
+  const wins = Number.isFinite(Number(profile?.wins)) ? Number(profile.wins) : 0;
+  const losses = Number.isFinite(Number(profile?.losses)) ? Number(profile.losses) : 0;
+  const winStreak = Number.isFinite(Number(profile?.winStreak)) ? Number(profile.winStreak) : 0;
+  const lossStreak = Number.isFinite(Number(profile?.lossStreak)) ? Number(profile.lossStreak) : 0;
+  if (result === "win") return { wins: wins + 1, losses, winStreak: winStreak + 1, lossStreak: 0 };
+  if (result === "loss") return { wins, losses: losses + 1, winStreak: 0, lossStreak: lossStreak + 1 };
+  return { wins, losses, winStreak, lossStreak };
+};
+
+/**
  * Hándicap Birdix tras una partida — se mueve según cuánto superaste (o no)
  * lo esperado a tu propio hcp, no por rachas de victorias/derrotas.
  * Esperado = 2 puntos Stableford netos por hoyo (par neto, tabla del reglamento).

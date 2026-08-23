@@ -46,6 +46,8 @@ import {
   calculateBirdixHcpAfterMatch,
 } from "./domain/rango";
 import { CARDS, applyStablefordCardEffect, isCardPlayable, cardNeedsTarget } from "./domain/cards";
+import { findRivalCandidates, createMatch as createMatchApi, confirmMatchResult } from "./lib/api/matches";
+import { listCourses } from "./lib/api/courses";
 
 /* =========================================================================
    BIRDIX · Prototipo frontend
@@ -226,46 +228,90 @@ const FAKE_TOP = [
   { name: "Hugo Mateo", points: 1900, change: -2 },
 ];
 
+/* Espejo local de los 3 campos reales que ya existen en Supabase
+   (courses/course_holes) — puente temporal hasta que D7 reescriba
+   MatchPlayScreen para leer course_holes directamente. Los `id` son los
+   UUID reales: MatchesScreen (T7) crea partidas con estos mismos ids vía
+   create_match, y MatchPlayScreen (sin tocar en PR1) necesita que
+   getCourseById/getCourseHoles seguan encontrando el campo por ese id. */
 const COURSES = [
   {
-    id: "zarapicos",
-    name: "Golf de Salamanca – Zarapicos",
+    id: "d29b8a6c-4580-48f7-9f97-30c5e30a5a28",
+    name: "Golf de Salamanca - Zarapicos",
     location: "Zarapicos, Salamanca",
     scorecardStatus: "verified",
     holes: [
-      { hole: 1, par: 5, strokeIndex: 7, meters: 490 },
-      { hole: 2, par: 4, strokeIndex: 11, meters: 306 },
-      { hole: 3, par: 4, strokeIndex: 1, meters: 411 },
-      { hole: 4, par: 3, strokeIndex: 17, meters: 156 },
-      { hole: 5, par: 5, strokeIndex: 15, meters: 451 },
-      { hole: 6, par: 4, strokeIndex: 9, meters: 374 },
-      { hole: 7, par: 4, strokeIndex: 5, meters: 366 },
-      { hole: 8, par: 3, strokeIndex: 13, meters: 181 },
-      { hole: 9, par: 4, strokeIndex: 3, meters: 377 },
-      { hole: 10, par: 4, strokeIndex: 10, meters: 349 },
-      { hole: 11, par: 5, strokeIndex: 6, meters: 496 },
-      { hole: 12, par: 4, strokeIndex: 8, meters: 372 },
-      { hole: 13, par: 3, strokeIndex: 4, meters: 200 },
-      { hole: 14, par: 4, strokeIndex: 14, meters: 370 },
-      { hole: 15, par: 4, strokeIndex: 12, meters: 349 },
-      { hole: 16, par: 4, strokeIndex: 16, meters: 325 },
-      { hole: 17, par: 3, strokeIndex: 18, meters: 136 },
-      { hole: 18, par: 5, strokeIndex: 2, meters: 521 },
+      { hole: 1, par: 5, strokeIndex: 7, meters: 465 },
+      { hole: 2, par: 4, strokeIndex: 11, meters: 267 },
+      { hole: 3, par: 4, strokeIndex: 1, meters: 367 },
+      { hole: 4, par: 3, strokeIndex: 17, meters: 119 },
+      { hole: 5, par: 5, strokeIndex: 15, meters: 425 },
+      { hole: 6, par: 4, strokeIndex: 9, meters: 321 },
+      { hole: 7, par: 4, strokeIndex: 5, meters: 328 },
+      { hole: 8, par: 3, strokeIndex: 13, meters: 147 },
+      { hole: 9, par: 4, strokeIndex: 3, meters: 341 },
+      { hole: 10, par: 4, strokeIndex: 10, meters: 316 },
+      { hole: 11, par: 5, strokeIndex: 6, meters: 462 },
+      { hole: 12, par: 4, strokeIndex: 8, meters: 332 },
+      { hole: 13, par: 3, strokeIndex: 4, meters: 166 },
+      { hole: 14, par: 4, strokeIndex: 14, meters: 325 },
+      { hole: 15, par: 4, strokeIndex: 12, meters: 259 },
+      { hole: 16, par: 4, strokeIndex: 16, meters: 299 },
+      { hole: 17, par: 3, strokeIndex: 18, meters: 109 },
+      { hole: 18, par: 5, strokeIndex: 2, meters: 466 },
     ],
   },
   {
-    id: "valmuza",
-    name: "La Valmuza Golf",
+    id: "eb9d5063-eb94-4632-833c-a0d4d993d64b",
+    name: "La Valmuza",
     location: "Salamanca",
-    scorecardStatus: "pending",
-    holes: [],
+    scorecardStatus: "verified",
+    holes: [
+      { hole: 1, par: 5, strokeIndex: 9, meters: 461 },
+      { hole: 2, par: 3, strokeIndex: 17, meters: 115 },
+      { hole: 3, par: 5, strokeIndex: 1, meters: 491 },
+      { hole: 4, par: 4, strokeIndex: 5, meters: 377 },
+      { hole: 5, par: 3, strokeIndex: 13, meters: 134 },
+      { hole: 6, par: 4, strokeIndex: 15, meters: 308 },
+      { hole: 7, par: 4, strokeIndex: 3, meters: 357 },
+      { hole: 8, par: 5, strokeIndex: 7, meters: 442 },
+      { hole: 9, par: 3, strokeIndex: 11, meters: 135 },
+      { hole: 10, par: 5, strokeIndex: 14, meters: 471 },
+      { hole: 11, par: 3, strokeIndex: 18, meters: 146 },
+      { hole: 12, par: 4, strokeIndex: 10, meters: 265 },
+      { hole: 13, par: 5, strokeIndex: 4, meters: 446 },
+      { hole: 14, par: 4, strokeIndex: 2, meters: 338 },
+      { hole: 15, par: 3, strokeIndex: 8, meters: 143 },
+      { hole: 16, par: 4, strokeIndex: 16, meters: 316 },
+      { hole: 17, par: 3, strokeIndex: 6, meters: 185 },
+      { hole: 18, par: 5, strokeIndex: 12, meters: 445 },
+    ],
   },
   {
-    id: "villamayor",
-    name: "Salamanca Golf & Country Club – Villamayor",
+    id: "928ba69f-d14d-4149-a519-8c9cb9df57d0",
+    name: "Salamanca Forum Golf - Villamayor",
     location: "Villamayor, Salamanca",
-    scorecardStatus: "pending",
-    holes: [],
+    scorecardStatus: "verified",
+    holes: [
+      { hole: 1, par: 4, strokeIndex: 9, meters: 324 },
+      { hole: 2, par: 5, strokeIndex: 17, meters: 464 },
+      { hole: 3, par: 4, strokeIndex: 3, meters: 354 },
+      { hole: 4, par: 3, strokeIndex: 7, meters: 175 },
+      { hole: 5, par: 4, strokeIndex: 11, meters: 300 },
+      { hole: 6, par: 4, strokeIndex: 5, meters: 361 },
+      { hole: 7, par: 5, strokeIndex: 15, meters: 474 },
+      { hole: 8, par: 3, strokeIndex: 13, meters: 160 },
+      { hole: 9, par: 4, strokeIndex: 1, meters: 334 },
+      { hole: 10, par: 3, strokeIndex: 18, meters: 127 },
+      { hole: 11, par: 4, strokeIndex: 2, meters: 331 },
+      { hole: 12, par: 3, strokeIndex: 16, meters: 136 },
+      { hole: 13, par: 4, strokeIndex: 12, meters: 309 },
+      { hole: 14, par: 4, strokeIndex: 6, meters: 335 },
+      { hole: 15, par: 5, strokeIndex: 10, meters: 457 },
+      { hole: 16, par: 3, strokeIndex: 14, meters: 180 },
+      { hole: 17, par: 5, strokeIndex: 8, meters: 455 },
+      { hole: 18, par: 4, strokeIndex: 4, meters: 346 },
+    ],
   },
 ];
 
@@ -1305,6 +1351,7 @@ const MatchesScreen = ({
   activeMatch,
   selectedCards,
   profile,
+  userId,
   ranking,
   onCreateMatch,
   onSelectCards,
@@ -1312,10 +1359,12 @@ const MatchesScreen = ({
   onGoCards,
 }) => {
   const [view, setView] = useState("list"); // list | create | cards
+  const [courses, setCourses] = useState([]);
+  const [coursesError, setCoursesError] = useState(null);
   const [draft, setDraft] = useState({
     format: profile?.format || "1v1",
     holes: profile?.holes || "9",
-    course: COURSES[0].id,
+    course: "",
     date: new Date().toISOString().slice(0, 10),
     time: "10:00",
     teammateId: FAKE_RIVALS[1]?.id || "",
@@ -1323,17 +1372,69 @@ const MatchesScreen = ({
     rival2Id: FAKE_RIVALS[2]?.id || "",
     mode: "competitive",
   });
+  // 1vs1 real: buscar rival por nombre entre profiles reales, sustituye a
+  // FAKE_RIVALS (T7). El 2vs2 de abajo sigue local-only con FAKE_RIVALS —
+  // fuera de alcance de PR1, ya deshabilitado en el selector de formato.
+  const [selectedRival, setSelectedRival] = useState(null);
+  const [rivalQuery, setRivalQuery] = useState("");
+  const [rivalResults, setRivalResults] = useState([]);
+  const [rivalSearching, setRivalSearching] = useState(false);
+  const [rivalSearchError, setRivalSearchError] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
   const [cardPicks, setCardPicks] = useState([]);
   const [cardModal, setCardModal] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listCourses()
+      .then((rows) => {
+        if (cancelled) return;
+        setCourses(rows);
+        setDraft((d) => (d.course ? d : { ...d, course: rows[0]?.id || "" }));
+      })
+      .catch((err) => {
+        if (!cancelled) setCoursesError(err?.message || "No se pudieron cargar los campos.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const trimmed = rivalQuery.trim();
+    if (!trimmed) {
+      setRivalResults([]);
+      setRivalSearchError(null);
+      setRivalSearching(false);
+      return;
+    }
+    setRivalSearching(true);
+    const timer = setTimeout(() => {
+      findRivalCandidates(trimmed, { excludeUserId: userId })
+        .then((rows) => {
+          setRivalResults(rows);
+          setRivalSearchError(null);
+        })
+        .catch((err) => setRivalSearchError(err?.message || "No se pudo buscar rival."))
+        .finally(() => setRivalSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [rivalQuery, userId]);
 
   const required = draft.holes === "9" ? 2 : 4;
   const selectedCardIds = Array.isArray(selectedCards) ? selectedCards : [];
   const selectedCourse = getCourseById(draft.course);
-  const selectedCourseReady = hasVerifiedScorecard(selectedCourse, Number(draft.holes));
+  // Boolean(draft.course) primero: si listCourses() falla y draft.course se
+  // queda vacío, getCourseById("") caería al campo por defecto (fallback del
+  // propio helper) y dejaría crear una partida contra un campo que el
+  // jugador nunca eligió — hay que bloquear explícitamente, no confiar en el
+  // fallback silencioso del helper.
+  const selectedCourseReady = Boolean(draft.course) && hasVerifiedScorecard(selectedCourse, Number(draft.holes));
   const draftIsTeamMatch = draft.format === "2v2";
   const teamSelectionIds = [draft.teammateId, draft.rivalId, draft.rival2Id].filter(Boolean);
   const teamSelectionReady = teamSelectionIds.length === 3 && new Set(teamSelectionIds).size === 3;
-  const canContinueToCards = selectedCourseReady && (!draftIsTeamMatch || teamSelectionReady);
+  const canContinueToCards = selectedCourseReady && (draftIsTeamMatch ? teamSelectionReady : Boolean(selectedRival));
 
   const startCreate = () => {
     setView("create");
@@ -1344,47 +1445,87 @@ const MatchesScreen = ({
     setView("cards");
   };
 
-  const confirmMatch = () => {
-    const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
-    const rival2 = FAKE_RIVALS.find((r) => r.id === draft.rival2Id);
+  const confirmMatch = async () => {
+    if (!draft.course) return; // ver nota en selectedCourseReady — no confiar en el fallback silencioso
     const course = getCourseById(draft.course);
     if (!hasVerifiedScorecard(course, Number(draft.holes))) return;
-    if (draftIsTeamMatch && !teamSelectionReady) return;
-    if (!draftIsTeamMatch && !rival) return;
-    const players = draftIsTeamMatch ? buildTeamPlayers(profile, ranking, draft) : [];
-    const teamA = players.filter((p) => p.team === "A");
-    const teamB = players.filter((p) => p.team === "B");
-    const match = {
-      id: "m_" + Date.now(),
-      matchType: draftIsTeamMatch ? "2v2" : "1v1",
-      format: draft.format === "1v1" ? "1 vs 1" : "2 vs 2",
-      holes: Number(draft.holes),
-      courseId: course.id,
-      course: course.name,
-      date: `${draft.date}T${draft.time}:00`,
-      mode: draft.mode,
-      playerHcp: normalizeHcp(profile?.hcp),
-      playerBirdixHcp: getProfileBirdixHcp(profile),
-      rivalId: rival?.id,
-      rivalName: draftIsTeamMatch ? teamB.map((p) => p.name).join(" / ") : rival.name,
-      rivalHcp: rival?.hcp,
-      rivalBirdixHcp: getRivalBirdixHcp(rival),
-      rivalRank: draftIsTeamMatch ? averageRank(teamB) : rival.rank,
-      teammateId: draftIsTeamMatch ? draft.teammateId : null,
-      rival2Id: draftIsTeamMatch ? rival2?.id : null,
-      teams: draftIsTeamMatch
-        ? {
+
+    // 2vs2 sigue local-only con FAKE_RIVALS — fuera de alcance de PR1, ya
+    // deshabilitado en el selector de formato, nunca se llega aquí en la práctica.
+    if (draftIsTeamMatch) {
+      if (!teamSelectionReady) return;
+      const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
+      const rival2 = FAKE_RIVALS.find((r) => r.id === draft.rival2Id);
+      const players = buildTeamPlayers(profile, ranking, draft);
+      const teamA = players.filter((p) => p.team === "A");
+      const teamB = players.filter((p) => p.team === "B");
+      onCreateMatch({
+        id: "m_" + Date.now(),
+        matchType: "2v2",
+        format: "2 vs 2",
+        holes: Number(draft.holes),
+        courseId: course.id,
+        course: course.name,
+        date: `${draft.date}T${draft.time}:00`,
+        mode: draft.mode,
+        playerHcp: normalizeHcp(profile?.hcp),
+        playerBirdixHcp: getProfileBirdixHcp(profile),
+        rivalId: rival?.id,
+        rivalName: teamB.map((p) => p.name).join(" / "),
+        rivalHcp: rival?.hcp,
+        rivalBirdixHcp: getRivalBirdixHcp(rival),
+        rivalRank: averageRank(teamB),
+        teammateId: draft.teammateId,
+        rival2Id: rival2?.id,
+        teams: {
           A: { name: "Tu equipo", playerIds: teamA.map((p) => p.id) },
           B: { name: "Equipo rival", playerIds: teamB.map((p) => p.id) },
-        }
-        : null,
-      players,
-      status: "pending",
-      cards: cardPicks,
-    };
-    onCreateMatch(match);
-    onSelectCards(cardPicks);
-    setView("list");
+        },
+        players,
+        status: "pending",
+        cards: cardPicks,
+      });
+      onSelectCards(cardPicks);
+      setView("list");
+      return;
+    }
+
+    if (!selectedRival) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const match = await createMatchApi({
+        courseId: course.id,
+        courseName: course.name,
+        rivalId: selectedRival.id,
+        rivalName: selectedRival.full_name,
+        holesCount: Number(draft.holes),
+        selectedCards: cardPicks,
+      });
+      onCreateMatch({
+        ...match,
+        matchType: "1v1",
+        format: "1 vs 1",
+        date: `${draft.date}T${draft.time}:00`,
+        mode: draft.mode,
+        playerHcp: normalizeHcp(profile?.hcp),
+        playerBirdixHcp: getProfileBirdixHcp(profile),
+        rivalHcp: match.rivalBirdixHcp,
+        status: "pending",
+        cards: cardPicks,
+        isRealMatch: true,
+        playerSide: "player_a",
+      });
+      onSelectCards(cardPicks);
+      setView("list");
+    } catch (err) {
+      // D6: exigir cobertura al crear, error claro + reintentar manual (este
+      // mismo botón), sin outbox — la creación es una acción única, no algo
+      // que reintentar solo en segundo plano como los golpes/cartas.
+      setCreateError(err?.message || "No se pudo crear la partida. Comprueba tu conexión e inténtalo de nuevo.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const toggleCard = (cardId) => {
@@ -1427,6 +1568,56 @@ const MatchesScreen = ({
           );
         })}
       </div>
+    </div>
+  );
+
+  const renderRivalSearch = () => (
+    <div>
+      <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2.5">Rival</span>
+      {selectedRival ? (
+        <button
+          onClick={() => {
+            setSelectedRival(null);
+            setRivalQuery("");
+          }}
+          className="w-full flex items-center gap-3 p-3 rounded-[24px] ring-2 ring-[#00703a]/40 bg-[#E6F4ED] shadow-[0_12px_28px_rgba(1,79,42,0.10)] transition-all duration-200 active:scale-[0.99]"
+        >
+          <Avatar initials={initialsFromName(selectedRival.full_name)} size="md" tone="emerald" />
+          <div className="text-left flex-1">
+            <p className="font-black text-slate-950 text-[14px] leading-tight">{selectedRival.full_name}</p>
+            <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(selectedRival.birdix_hcp)}</p>
+          </div>
+          <span className="text-[11px] text-slate-400 font-bold">Cambiar</span>
+        </button>
+      ) : (
+        <>
+          <Field label="Buscar por nombre" value={rivalQuery} onChange={setRivalQuery} placeholder="Nombre del rival" icon={Search} />
+          {rivalSearchError && <p className="text-[12px] text-[#A8543F] font-semibold mt-2">{rivalSearchError}</p>}
+          {rivalSearching && <p className="text-[12px] text-slate-400 font-semibold mt-2">Buscando…</p>}
+          {!rivalSearching && rivalQuery.trim() && rivalResults.length === 0 && !rivalSearchError && (
+            <p className="text-[12px] text-slate-400 font-semibold mt-2">Sin resultados para "{rivalQuery.trim()}".</p>
+          )}
+          <div className="space-y-2.5 mt-2.5">
+            {rivalResults.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => {
+                  setSelectedRival(r);
+                  setRivalResults([]);
+                }}
+                className="w-full flex items-center gap-3 p-3 rounded-[24px] ring-1 ring-black/5 bg-white hover:ring-[#00703a]/20 hover:shadow-sm transition-all duration-200 active:scale-[0.99]"
+              >
+                <Avatar initials={initialsFromName(r.full_name)} size="md" tone="slate" />
+                <div className="text-left flex-1">
+                  <p className="font-black text-slate-950 text-[14px] leading-tight">{r.full_name}</p>
+                  <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(r.birdix_hcp)}</p>
+                </div>
+                <DivisionBadge points={r.points} compact />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -1504,7 +1695,6 @@ const MatchesScreen = ({
 
   /* ----- Vista creación ----- */
   if (view === "create") {
-    const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
     return (
       <div className="-mx-4 sm:-mx-6 -mt-6 min-h-[calc(100vh-96px)] bg-[#F5FBF7] px-4 sm:px-6 pt-6 pb-6 space-y-5 transition-colors duration-300">
         <div className="flex items-center gap-3">
@@ -1550,17 +1740,21 @@ const MatchesScreen = ({
             <select
               value={draft.course}
               onChange={(e) => setDraft({ ...draft, course: e.target.value })}
-              className="w-full bg-white rounded-[22px] ring-1 ring-black/5 py-3.5 px-4 text-[15px] font-semibold text-slate-950 shadow-sm outline-none focus:ring-[#00703a] focus:ring-2 transition"
+              disabled={!courses.length}
+              className="w-full bg-white rounded-[22px] ring-1 ring-black/5 py-3.5 px-4 text-[15px] font-semibold text-slate-950 shadow-sm outline-none focus:ring-[#00703a] focus:ring-2 transition disabled:opacity-50"
             >
-              {COURSES.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}{c.scorecardStatus !== "verified" ? " - Próximamente" : ""}
-                </option>
-              ))}
+              {courses.length ? (
+                courses.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))
+              ) : (
+                <option value="">{coursesError ? "No se pudieron cargar los campos" : "Cargando campos…"}</option>
+              )}
             </select>
-            <p className="text-[11px] text-slate-500 mt-2 font-semibold">
-              {selectedCourse.location} · {selectedCourseReady ? "Tarjeta oficial cargada" : "Pendiente de tarjeta oficial"}
-            </p>
+            {coursesError && <p className="text-[11px] text-[#A8543F] mt-2 font-semibold">{coursesError}</p>}
+            {!coursesError && courses.length > 0 && (
+              <p className="text-[11px] text-slate-500 mt-2 font-semibold">{selectedCourse.location}</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Fecha" type="date" value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} />
@@ -1583,7 +1777,7 @@ const MatchesScreen = ({
               )}
             </>
           ) : (
-            renderPlayerPicker("Rival", "rivalId")
+            renderRivalSearch()
           )}
         </Card>
 
@@ -1664,13 +1858,19 @@ const MatchesScreen = ({
           )}
         </div>
 
-        <div className="sticky bottom-24 pt-2">
+        <div className="sticky bottom-24 pt-2 space-y-2">
+          {createError && (
+            <p className="text-[12px] text-[#A8543F] font-semibold text-center px-2">{createError}</p>
+          )}
           <button
             onClick={confirmMatch}
-            disabled={cardPicks.length !== required}
+            disabled={cardPicks.length !== required || creating}
             className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.22)] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between active:scale-[0.985] transition-all duration-200"
           >
-            <span className="flex items-center gap-2 font-black text-[15px]"><Check size={18} strokeWidth={2.5} />Confirmar partida</span>
+            <span className="flex items-center gap-2 font-black text-[15px]">
+              <Check size={18} strokeWidth={2.5} />
+              {creating ? "Creando…" : createError ? "Reintentar" : "Confirmar partida"}
+            </span>
             <ArrowRight size={18} strokeWidth={2.5} />
           </button>
         </div>
@@ -3317,6 +3517,27 @@ export default function BirdixApp() {
     dispatch({ type: "FINISH_MATCH", payload: { match: finishedMatch, rankingDelta: safeDelta } });
     setPlaying(false);
     setResultMatch({ match: finishedMatch, rankingBefore, rankingAfter: toRankingPoints(rankingBefore + safeDelta) });
+
+    // T8: confirmar mi lado del resultado real. Solo se aplica de verdad
+    // (rango/hcp/streak actualizados) cuando el rival TAMBIÉN haya
+    // confirmado el suyo — hoy, con MatchPlayScreen todavía de un solo
+    // dispositivo (D7 sin construir), eso no pasa aún de forma independiente,
+    // así que esto se queda "esperando al rival" hasta que D7 conecte una
+    // sesión real del otro jugador. No bloquea nada de lo que ve este
+    // jugador — se lanza en segundo plano, sin await.
+    if (match?.isRealMatch && state.user?.id) {
+      confirmMatchResult({
+        matchId: finishedMatch.id,
+        userId: state.user.id,
+        playerSide: match.playerSide || "player_a",
+        holes: finishedMatch.holes,
+        result: finishedMatch.result,
+        playerPoints: finishedMatch.playerPoints,
+        rivalPoints: finishedMatch.rivalPoints,
+      }).catch((err) => {
+        setToast(err?.message || "No se pudo confirmar el resultado. Se reintentará más adelante.");
+      });
+    }
   };
 
   const handleFindRival = () => setToast("Buscando rival…");
@@ -3445,6 +3666,7 @@ export default function BirdixApp() {
             activeMatch={state.activeMatch}
             selectedCards={state.selectedCards}
             profile={state.profile}
+            userId={state.user?.id}
             ranking={state.ranking}
             onCreateMatch={handleCreateMatch}
             onSelectCards={(cards) => dispatch({ type: "SET_SELECTED_CARDS", payload: cards })}

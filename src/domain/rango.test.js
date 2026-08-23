@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateEloDelta, calculateBirdixHcpAfterMatch, normalizeBirdixHcp } from "./rango";
+import { calculateEloDelta, calculateBirdixHcpAfterMatch, calculateStreakAfterMatch, normalizeBirdixHcp } from "./rango";
 
 describe("calculateEloDelta", () => {
   it("win as favorite gains fewer points than an underdog win", () => {
@@ -67,5 +67,28 @@ describe("calculateBirdixHcpAfterMatch", () => {
     // Same raw points, but 26 over a 9-hole round (expected 18) is a much
     // bigger positive margin than over an 18-hole round (expected 36).
     expect(nineHoles).toBeLessThan(eighteenHoles);
+  });
+});
+
+describe("calculateStreakAfterMatch", () => {
+  const profile = { wins: 3, losses: 2, winStreak: 2, lossStreak: 0 };
+
+  it("win: +1 win, win streak extends, loss streak resets", () => {
+    const withLossStreak = { wins: 1, losses: 4, winStreak: 0, lossStreak: 3 };
+    expect(calculateStreakAfterMatch(withLossStreak, "win")).toEqual({ wins: 2, losses: 4, winStreak: 1, lossStreak: 0 });
+    expect(calculateStreakAfterMatch(profile, "win")).toEqual({ wins: 4, losses: 2, winStreak: 3, lossStreak: 0 });
+  });
+
+  it("loss: +1 loss, loss streak extends, win streak resets", () => {
+    expect(calculateStreakAfterMatch(profile, "loss")).toEqual({ wins: 3, losses: 3, winStreak: 0, lossStreak: 1 });
+  });
+
+  it("draw: nothing changes", () => {
+    expect(calculateStreakAfterMatch(profile, "draw")).toEqual({ wins: 3, losses: 2, winStreak: 2, lossStreak: 0 });
+  });
+
+  it("missing/non-numeric fields default to 0", () => {
+    expect(calculateStreakAfterMatch({}, "win")).toEqual({ wins: 1, losses: 0, winStreak: 1, lossStreak: 0 });
+    expect(calculateStreakAfterMatch(undefined, "loss")).toEqual({ wins: 0, losses: 1, winStreak: 0, lossStreak: 1 });
   });
 });

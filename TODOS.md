@@ -2,6 +2,113 @@
 
 ## Arquitectura
 
+### Rediseñar MatchPlayScreen para 2 dispositivos reales
+
+**What:** Rediseñar la pantalla de partida 1vs1 (`MatchPlayScreen`, `App.jsx:2578-3186`)
+para que cada jugador lleve su propio móvil — slots de carta por jugador (hoy hay un
+único `cardId` por hoyo), estados "esperando al rival", y quitar el input manual
+`ScoreInput label="Golpes rival"` (hoy un solo móvil apunta los golpes de los dos).
+
+**Why:** Hoy es un solo dispositivo llevando el marcador de ambos jugadores. Pero
+`holeResolution.js`, `matchSync.js` y `useMatchRealtime.js` (T1-T4, 19 ago 2026) están
+diseñados enteramente para dos clientes separados, cada uno escribiendo solo su propio
+lado — no se pueden conectar de verdad a la pantalla real tal como está hoy. Sin esto,
+ninguna partida real funciona de extremo a extremo con cartas y Realtime.
+
+**Context:** Descubierto por la voz externa (subagente Claude independiente) durante
+`/plan-eng-review` de Approach B PR1, el 19 de agosto de 2026 — ni el eng review
+original del 19 ago ni la primera pasada de este mismo review lo detectaron, porque
+ninguno de los dos abrió el componente real de la pantalla de juego. Es probablemente
+el trozo de trabajo más grande e incierto de todo el lanzamiento del 10 sept, y no
+tenía su propia decisión hasta esta sesión (D7).
+
+**Estado — `/plan-eng-review` de D7 completado el 21 ago 2026:** arquitectura cerrada
+— cartas por dispositivo con revelado a nivel de interfaz (D8, D9, D11), golpes
+cruzados con fallback de auto-registro si el marcador está offline (D8/D14),
+resolución de hoyo simétrica por cliente (D10), nunca bloquea esperando al rival
+(D12). La voz externa encontró 2 huecos bloqueantes que ni el eng review del 19 ago
+ni la primera pasada de este mismo review habían visto: la política SELECT de
+`match_players` no dejaba a un jugador leer la fila del rival (rompía tanto D9 como
+el cálculo de hcp compartido) — corregida; y `matchSync.js` no comprobaba filas
+afectadas, así que un UPDATE sobre una fila inexistente fallaba en silencio —
+corregido. Ver
+`~/.gstack/projects/usuario/usuario-main-eng-review-d7-20260821.md` para el detalle
+completo. **Pendiente real:** nada de esto está implementado todavía — es plan de
+arquitectura, no código.
+
+**Effort:** L
+**Priority:** P1
+**Depends on:** Su propio `/plan-eng-review` antes de implementar — no meterlo dentro
+de otra sesión de review ya en marcha sobre otra cosa (mismo razonamiento que separó
+Approach B en PR1/PR2).
+
+### Columna sin uso: card_cancelled_reason
+
+**What:** Decidir el propósito de `card_cancelled_reason` (columna singular en
+`match_holes`, aparte de las dos por jugador `player_a_card_cancelled_reason`/
+`player_b_card_cancelled_reason` que sí se usan) — o eliminarla si no tiene uso real.
+
+**Why:** Hoy nadie la escribe ni la lee. Podría ser vestigial de una versión anterior
+del esquema, o pensada para una nota compartida del hoyo que nunca llegó a
+implementarse.
+
+**Context:** Encontrada por la voz externa durante `/plan-eng-review` de D7
+(`MatchPlayScreen`, 2 dispositivos), 21 ago 2026.
+
+**Effort:** XS
+**Priority:** P3
+**Depends on:** Ninguna — barato de revisar cuando convenga.
+
+### club_id real (autocompletar/crear contra la tabla clubs)
+
+**What:** Sustituir el campo de texto libre "Campo en el que sueles jugar" del
+onboarding (`OnboardingStepper`, `App.jsx:1107`, campo `club`) por un buscador/
+autocompletar contra la tabla `clubs` real — crear el club si no existe.
+
+**Why:** `profiles.club_id` ya es una referencia real a `clubs` (uuid, FK), no texto
+libre — hoy el onboarding guarda un string suelto que nunca llega a `club_id`.
+
+**Context:** Gap #3 de `REBUILD_ARCHITECTURE.md` (4 ago 2026). Confirmado
+explícitamente fuera de alcance para el lanzamiento del 10 sept 2026 por el fundador
+al arrancar `/plan-eng-review` de Approach B PR1 (19 ago 2026) — no hay funcionalidad
+de clubes todavía que lo necesite de verdad.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** Ninguna — barato de resolver cuando convenga.
+
+### RLS por columna en match_holes
+
+**What:** Añadir restricción RLS por columna en `match_holes` — cada jugador solo
+debería poder escribir sus propios campos (`player_a_*` si eres player_a), no los del
+rival. Hoy la política UPDATE es solo por fila (¿eres jugador de esta partida?), sin
+restricción de qué columnas puede tocar.
+
+**Why:** Verificado en vivo contra Supabase real (19 ago 2026): cualquier jugador
+puede escribir hoy cualquier campo de la fila, incluidas las cartas/golpes del rival.
+Aceptable en el grupo cerrado del fundador (sin adversario real), no aceptable si
+Birdix se abre a gente que no se conoce.
+
+**Context:** Descubierto por la voz externa durante `/plan-eng-review` de Approach B
+PR1 (19 ago 2026) — fue la razón por la que D1 (un trigger de Postgres para la
+resolución de Bloqueo) se revirtió a cliente-a-cliente: mover el cálculo al servidor
+no protegía nada mientras las entradas siguieran siendo falsificables por columna.
+
+**Actualizado tras `/plan-eng-review` de D7 (21 ago 2026):** el diseño de cómo escribe
+cada cliente ya está cerrado (D8/D10/D11/D14 — marcado cruzado con fallback, cada uno
+escribe su propio campo por convención de la app, no por restricción de la base de
+datos). La voz externa señaló explícitamente que toda esa convención es solo eso —
+convención, no impuesta por RLS — y cuestionó si merece la pena frente a un modelo
+más simple; se decidió mantener la convención (D14) precisamente porque protege
+contra carreras accidentales entre los 2 dispositivos, no solo contra manipulación.
+Este TODO sigue siendo la pieza que falta para que esa protección sea real a nivel de
+base de datos, no solo de convención de la app — ya no depende de diseñar D7 primero
+(D7 ya está diseñado), solo de implementarlo.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** Ninguna — D7 ya está diseñado, esto se puede abordar cuando convenga.
+
 ### Reestructuración completa (Approach B) + esquema de participantes en Supabase
 
 **What:** Separar `src/App.jsx` (3400+ líneas) en `domain/`, `screens/`, `hooks/`, `lib/api/`, `constants/`, y cerrar el esquema de participantes por partida en Supabase (1vs1/2vs2, con validación explícita de que las políticas RLS funcionan igual con 2 y con 4 jugadores).
@@ -10,7 +117,24 @@
 
 **Context:** Aprobado como Approach B en `/office-hours` del 9 de agosto de 2026 (ver `~/.gstack/projects/birdix-app/usuario-unknown-design-20260809-000456.md`). El 10 de agosto, durante `/plan-eng-review` de reglas de mazo + fórmula del Rango, se decidió explícitamente separar este rebuild en su propia sesión en vez de mezclarlo con el cierre de reglas — para no combinar una reestructuración grande con un cambio de reglas de juego en el mismo PR. Debe cerrarse en su propio `/plan-eng-review` antes de tocar código de Matches.
 
-**Effort:** XL
+**Estado — PR1 (datos reales) completado el 23 ago 2026:** partido en 2 PRs tras
+`/plan-eng-review` (19/23 ago) — el split mecánico a `components/screens/hooks/` sigue
+pendiente (ver abajo), pero PR1 (buscar rival real, crear partida atómica, cerrar
+partida y actualizar Rango) ya está construido y probado: migraciones aplicadas en
+Supabase (`match_players` RLS UPDATE/creación duplicada corregida, RPCs `create_match`/
+`apply_match_result`/`get_match_context`, ambas probadas en vivo con cuentas reales,
+no solo con mocks), `src/lib/api/matches.js` + `courses.js` (25 tests), `MatchesScreen`
+sustituye FAKE_RIVALS/COURSES por datos reales. `MatchPlayScreen` sigue sin tocar a
+propósito (D7, ver TODO "Rediseñar MatchPlayScreen" arriba) — sigue calculando
+localmente y ahora llama a `confirmMatchResult` al cerrar, pero el 2º jugador no puede
+confirmar de verdad hasta que D7 le dé su propia sesión. Durante la implementación se
+descubrieron y corrigieron 2 huecos que no estaban en el eng review original:
+`match_players`/`match_holes`/`match_confirmations` ya tenían datos de prueba de
+mayo-junio 2026 (limpiados, ver decisión en gstack), y `match_confirmations` no tenía
+restricción única por jugador (añadida). El split a carpetas (`components/`,
+`screens/`) sigue sin empezar.
+
+**Effort:** XL (el split de carpetas es lo único que queda de esta pieza)
 **Priority:** P1
 **Depends on:** None
 
