@@ -8,10 +8,12 @@ vi.mock("./supabase", () => ({
     from: (table) => ({
       update: (patch) => ({
         eq: (col1, val1) => ({
-          eq: (col2, val2) => {
-            eqSpy(table, patch, col1, val1, col2, val2);
-            return updateMock(patch);
-          },
+          eq: (col2, val2) => ({
+            select: (cols) => {
+              eqSpy(table, patch, col1, val1, col2, val2, cols);
+              return updateMock(patch);
+            },
+          }),
         }),
       }),
     }),
@@ -51,14 +53,14 @@ const importMatchSync = () => import("./matchSync");
 
 describe("queueMatchHoleWrite", () => {
   it("escribe de inmediato en Supabase cuando hay cobertura", async () => {
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     const { queueMatchHoleWrite, getPendingSyncCount } = await importMatchSync();
 
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 3, patch: { player_a_strokes: 4 } });
 
     expect(updateMock).toHaveBeenCalledTimes(1);
     expect(updateMock).toHaveBeenCalledWith({ player_a_strokes: 4 });
-    expect(eqSpy).toHaveBeenCalledWith("match_holes", { player_a_strokes: 4 }, "match_id", "m1", "hole_number", 3);
+    expect(eqSpy).toHaveBeenCalledWith("match_holes", { player_a_strokes: 4 }, "match_id", "m1", "hole_number", 3, "hole_number");
     expect(getPendingSyncCount()).toBe(0);
   });
 
@@ -77,6 +79,18 @@ describe("queueMatchHoleWrite", () => {
 
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 5, patch: { player_a_card: "double" } });
 
+    expect(getPendingSyncCount()).toBe(1);
+  });
+
+  it("D15: un UPDATE que no coincide con ninguna fila (0 filas devueltas, sin error) se trata como fallo, no como éxito silencioso", async () => {
+    updateMock.mockResolvedValueOnce({ error: null, data: [] });
+    const { queueMatchHoleWrite, getPendingSyncCount } = await importMatchSync();
+
+    await queueMatchHoleWrite({ matchId: "m1", holeNumber: 5, patch: { player_a_card: "double" } });
+
+    // Se queda en el outbox — la fila de match_holes no existía todavía
+    // (p.ej. create_match no la sembró a tiempo), y PostgREST no devuelve
+    // error por un UPDATE de 0 filas, así que hay que comprobarlo a mano.
     expect(getPendingSyncCount()).toBe(1);
   });
 
@@ -111,7 +125,7 @@ describe("flushOutbox", () => {
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 9, patch: { player_a_strokes: 5 } });
     expect(getPendingSyncCount()).toBe(1);
 
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     await flushOutbox();
 
     expect(getPendingSyncCount()).toBe(0);
@@ -124,7 +138,7 @@ describe("flushOutbox", () => {
 
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 2, patch: { player_a_strokes: 4 } });
 
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     await flushOutbox();
 
     // el patch reenviado en el reintento es exactamente el mismo — un UPDATE
@@ -142,7 +156,7 @@ describe("flushOutbox", () => {
     expect(getPendingSyncCount()).toBe(2);
 
     updateMock.mockReset();
-    updateMock.mockResolvedValue({ error: null });
+    updateMock.mockResolvedValue({ error: null, data: [{ hole_number: 1 }] });
     await flushOutbox();
 
     expect(getPendingSyncCount()).toBe(0);
@@ -159,7 +173,7 @@ describe("app cerrada con cola pendiente", () => {
       JSON.stringify({ "m1:4": { matchId: "m1", holeNumber: 4, patch: { player_a_strokes: 3 } } })
     );
 
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     const { getPendingSyncCount, flushOutbox } = await importMatchSync();
 
     expect(getPendingSyncCount()).toBe(1);
@@ -175,7 +189,7 @@ describe("initMatchSync", () => {
       "birdix:match-sync:outbox",
       JSON.stringify({ "m1:1": { matchId: "m1", holeNumber: 1, patch: { player_a_strokes: 4 } } })
     );
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
 
     const fakeWindow = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
     vi.stubGlobal("window", fakeWindow);
@@ -203,7 +217,7 @@ describe("initMatchSync", () => {
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 6, patch: { player_a_card: "shield" } });
     expect(getPendingSyncCount()).toBe(1);
 
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     await listeners.online();
 
     expect(getPendingSyncCount()).toBe(0);
@@ -222,7 +236,7 @@ describe("initMatchSync", () => {
     await queueMatchHoleWrite({ matchId: "m1", holeNumber: 8, patch: { player_a_strokes: 4 } });
     expect(getPendingSyncCount()).toBe(1);
 
-    updateMock.mockResolvedValueOnce({ error: null });
+    updateMock.mockResolvedValueOnce({ error: null, data: [{ hole_number: 1 }] });
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(getPendingSyncCount()).toBe(0);

@@ -46,8 +46,13 @@ import {
   calculateBirdixHcpAfterMatch,
 } from "./domain/rango";
 import { CARDS, applyStablefordCardEffect, isCardPlayable, cardNeedsTarget } from "./domain/cards";
-import { findRivalCandidates, createMatch as createMatchApi, confirmMatchResult } from "./lib/api/matches";
+import { hasStrokeInput, calculateStablefordPoints, getHandicapStrokesForHole, strokesForIndex } from "./domain/stableford";
+import { resolveHoleCards } from "./domain/holeResolution";
+import { deriveHoleView, bothPlayersDecided, computeBaseHoleScores, applyCardToBaseScore } from "./domain/matchHoleView";
+import { findRivalCandidates, createMatch as createMatchApi, confirmMatchResult, listMatchHoles, listMyActiveMatches, confirmDeck } from "./lib/api/matches";
 import { listCourses } from "./lib/api/courses";
+import { queueMatchHoleWrite } from "./lib/matchSync";
+import { useMatchRealtime } from "./hooks/useMatchRealtime";
 
 /* =========================================================================
    BIRDIX · Prototipo frontend
@@ -331,19 +336,6 @@ const calculateMatchWinner = (playerPoints, rivalPoints) => {
   return "draw";
 };
 
-const calculateStablefordPoints = (netStrokes, par) => {
-  const diff = netStrokes - par;
-  if (diff <= -3) return 5;
-  if (diff === -2) return 4;
-  if (diff === -1) return 3;
-  if (diff === 0) return 2;
-  if (diff === 1) return 1;
-  return 0;
-};
-
-const hasStrokeInput = (value) =>
-  value !== "" && value !== null && value !== undefined && Number.isFinite(Number(value));
-
 const initialsFromName = (name = "?") =>
   String(name)
     .split(" ")
@@ -432,21 +424,6 @@ const getCourseHoles = (courseIdOrName, holeCount = 18) => {
 const hasVerifiedScorecard = (course, holeCount = 18) => {
   const holes = Array.isArray(course?.holes) ? course.holes : [];
   return course?.scorecardStatus === "verified" && holes.length >= clampNumber(holeCount, 1, 18, 18);
-};
-
-const strokesForIndex = (hcpDiff, strokeIndex) => {
-  const diff = Math.max(0, Math.round(hcpDiff));
-  const fullRounds = Math.floor(diff / 18);
-  const extra = diff % 18;
-  return fullRounds + (strokeIndex <= extra ? 1 : 0);
-};
-
-const getHandicapStrokesForHole = (playerHcp, rivalHcp, strokeIndex) => {
-  const player = normalizeBirdixHcp(playerHcp);
-  const rival = normalizeBirdixHcp(rivalHcp);
-  if (player === rival) return { player: 0, rival: 0 };
-  if (player > rival) return { player: strokesForIndex(player - rival, strokeIndex), rival: 0 };
-  return { player: 0, rival: strokesForIndex(rival - player, strokeIndex) };
 };
 
 const formatDate = (d) => {
@@ -3256,6 +3233,696 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
 };
 
 /* ---------------------------------------------------------------------------
+   14.2 · SCREEN · PARTIDA REAL 1vs1 A 2 DISPOSITIVOS
+   Construido en /plan-eng-review de D7 (21/23 ago 2026, T3-T9).
+
+   Sustituye a MatchPlayScreen solo para match.isRealMatch — cada jugador
+   lleva su propio móvil, sincronizado vía Supabase Realtime sobre
+   match_holes. MatchPlayScreen se queda intacto para 2vs2 (local, fuera de
+   alcance) y para cualquier partida antigua sin isRealMatch.
+
+   Principios de esta pantalla (D8-D16, ver DESIGN.md "Estado de conexión"):
+   - Cartas: privadas por dispositivo, escritas pronto pero ocultas en
+     pantalla hasta que ambos confirman (Escudo es la única excepción —
+     visible en cuanto se juega, ver deriveHoleView).
+   - Golpes: cruzados (marco el golpe de mi rival) con fallback de
+     auto-registro si mi rival no lo ha apuntado.
+   - Resolución: cada cliente calcula y escribe SOLO su propio lado —
+     simétrico, funciona igual si el rival está momentáneamente offline.
+   - Nunca bloquea: se puede avanzar de hoyo con el actual sin resolver.
+   --------------------------------------------------------------------------*/
+
+const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish, onCancel }) => {
+  const total = getMatchHoleCount(match);
+  const rivalName = match?.rivalName || "Rival";
+  const playerMatchHcp = normalizeBirdixHcp(match?.playerBirdixHcp ?? playerBirdixHcp);
+  const rivalMatchHcp = normalizeBirdixHcp(match?.rivalBirdixHcp ?? match?.rivalHcp);
+  const mySide = match?.playerSide === "player_b" ? "player_b" : "player_a";
+  const rivalSide = mySide === "player_a" ? "player_b" : "player_a";
+  const matchCourse = getCourseById(match?.courseId || match?.course, null);
+  const courseHoles = matchCourse ? getCourseHoles(matchCourse.id, total) : [];
+  const required = total === 9 ? 2 : 4;
+
+  const [deck, setDeck] = useState(Array.isArray(match?.selectedCards) ? match.selectedCards.filter(Boolean) : []);
+  const [deckPicks, setDeckPicks] = useState([]);
+  const [confirmingDeck, setConfirmingDeck] = useState(false);
+  const [deckError, setDeckError] = useState(null);
+
+  const [rowsByHole, setRowsByHole] = useState({});
+  const [loadingHoles, setLoadingHoles] = useState(true);
+  const [hole, setHole] = useState(0);
+  const [showCardPicker, setShowCardPicker] = useState(false);
+  const [revealCard, setRevealCard] = useState(null);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const [rivalStrokesInput, setRivalStrokesInput] = useState("");
+  const [selfStrokesOpen, setSelfStrokesOpen] = useState(false);
+  const [selfStrokesInput, setSelfStrokesInput] = useState("");
+  const [secondShotPrompt, setSecondShotPrompt] = useState(false);
+  const [secondShotInput, setSecondShotInput] = useState("");
+  const resolvedSignatures = useRef({});
+
+  // Nota: sin el efecto de "clampear hole si total cambia" que tiene
+  // MatchPlayScreen — aquí `total` sale de match.holes, fijo desde que se
+  // crea la partida, nunca cambia durante la vida de este componente.
+
+  useEffect(() => {
+    if (!revealCard) return;
+    const t = setTimeout(() => setRevealCard(null), 1100);
+    return () => clearTimeout(t);
+  }, [revealCard]);
+
+  // Hidratación inicial: lo que ya existiera en match_holes antes de que
+  // este dispositivo abriera la partida (holes que el rival ya empezó, o
+  // una sesión anterior propia).
+  useEffect(() => {
+    let cancelled = false;
+    listMatchHoles(match.id)
+      .then((rows) => {
+        if (cancelled) return;
+        const byHole = {};
+        rows.forEach((r) => {
+          byHole[r.hole_number] = r;
+        });
+        setRowsByHole(byHole);
+        setLoadingHoles(false);
+      })
+      .catch(() => setLoadingHoles(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [match.id]);
+
+  // Realtime — cada UPDATE de match_holes de esta partida (mío o del
+  // rival) llega aquí y se funde en el estado local.
+  const { status: connectionStatus } = useMatchRealtime(match.id, {
+    onChange: (payload) => {
+      const row = payload?.new;
+      if (!row) return;
+      setRowsByHole((prev) => ({ ...prev, [row.hole_number]: row }));
+    },
+  });
+
+  const holeNumber = hole + 1;
+  const rawRow = rowsByHole[holeNumber] || { hole_number: holeNumber };
+  const view = deriveHoleView(rawRow, mySide);
+  const currentCourseHole = courseHoles[hole] || { par: 4, strokeIndex: hole + 1, meters: null };
+  const usedCardIds = deck.filter((id) => {
+    if (id === view.my.card) return false;
+    return Object.values(rowsByHole).some((r) => r[`${mySide}_card`] === id);
+  });
+
+  // Resolución conjunta: cada cliente calcula y escribe solo su propio
+  // lado en cuanto tiene ambos golpes crudos y ambos jugadores han
+  // decidido su jugada del hoyo (D10, D12). Se vuelve a resolver si algo
+  // relevante cambia después (p.ej. Segundo Golpe cambia mi golpe tras una
+  // primera resolución) — la firma evita bucles y recálculos de más.
+  useEffect(() => {
+    Object.keys(rowsByHole).forEach((hnKey) => {
+      const hn = Number(hnKey);
+      const row = rowsByHole[hn];
+      const v = deriveHoleView(row, mySide);
+      const bothStrokes = hasStrokeInput(row[`${mySide}_strokes`]) && hasStrokeInput(row[`${rivalSide}_strokes`]);
+      const decided = bothPlayersDecided(v);
+      if (!bothStrokes || !decided) return;
+
+      const signature = [row[`${mySide}_card`], row[`${mySide}_strokes`], row[`${rivalSide}_card`], row[`${rivalSide}_strokes`]].join("|");
+      if (resolvedSignatures.current[hn] === signature) return;
+      resolvedSignatures.current[hn] = signature;
+
+      const idx = hn - 1;
+      const courseHole = courseHoles[idx] || { par: 4, strokeIndex: hn };
+      const base = computeBaseHoleScores({
+        par: courseHole.par,
+        strokeIndex: courseHole.strokeIndex,
+        playerAHcp: mySide === "player_a" ? playerMatchHcp : rivalMatchHcp,
+        playerBHcp: mySide === "player_a" ? rivalMatchHcp : playerMatchHcp,
+        playerAStrokes: row.player_a_strokes,
+        playerBStrokes: row.player_b_strokes,
+      });
+      const myBase = base[mySide === "player_a" ? "playerA" : "playerB"];
+      const rivalBase = base[mySide === "player_a" ? "playerB" : "playerA"];
+
+      const resolution = resolveHoleCards({
+        playerCard: row[`${mySide}_card`] || null,
+        playerChoiceMade: v.my.cardConfirmed || v.my.holeSubmitted,
+        rivalCard: row[`${rivalSide}_card`] || null,
+        rivalChoiceMade: v.rival.cardConfirmed || v.rival.holeSubmitted,
+      });
+
+      let priorMe = 0;
+      let priorRival = 0;
+      for (let i = 0; i < idx; i++) {
+        const r = rowsByHole[i + 1];
+        if (!r) continue;
+        priorMe += r[`${mySide}_stableford`] || 0;
+        priorRival += r[`${rivalSide}_stableford`] || 0;
+      }
+
+      const myCard = row[`${mySide}_card`] ? CARDS.find((c) => c.id === row[`${mySide}_card`]) : null;
+      const fx = applyCardToBaseScore(myCard, {
+        base: myBase.base,
+        rivalBase: rivalBase.base,
+        netDiff: myBase.netDiff,
+        rivalNetDiff: rivalBase.netDiff,
+        hasScore: myBase.hasScore,
+        rivalHasScore: rivalBase.hasScore,
+        isBehind: priorMe < priorRival,
+        cancelledByBlock: resolution.playerCancelled,
+      });
+      const myFinalStableford = Math.max(0, myBase.base + (fx.delta || 0));
+
+      const patch = {
+        [`${mySide}_hcp_strokes`]: myBase.hcpStrokes,
+        [`${mySide}_net`]: myBase.net,
+        [`${mySide}_stableford`]: myFinalStableford,
+        [`${mySide}_card_applied`]: true,
+      };
+      if (resolution.playerCancelled) {
+        patch[`${mySide}_card_cancelled_reason`] = "Anulada por Bloqueo rival";
+      }
+      if ((v.my.cardConfirmed || v.my.holeSubmitted) && (v.rival.cardConfirmed || v.rival.holeSubmitted) && !row.cards_revealed) {
+        patch.cards_revealed = true;
+      }
+      queueMatchHoleWrite({ matchId: match.id, holeNumber: hn, patch });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowsByHole, mySide, rivalSide, playerMatchHcp, rivalMatchHcp, match.id]);
+
+  // Cierra mi ventana de elección de este hoyo en cuanto mi propio golpe
+  // llega (lo cruce mi rival o lo apunte yo de fallback, da igual quién lo
+  // escribió) si todavía no había elegido carta — Decision 4: "cuando los
+  // dos han elegido, o entra el primer golpe, lo que ocurra primero". Sin
+  // esto, un hoyo sin carta de ninguno de los 2 nunca llegaría a
+  // bothPlayersDecided() y jamás se resolvería.
+  const submittedHolesRef = useRef({});
+  useEffect(() => {
+    Object.keys(rowsByHole).forEach((hnKey) => {
+      const hn = Number(hnKey);
+      const row = rowsByHole[hn];
+      if (submittedHolesRef.current[hn]) return;
+      const alreadySubmitted = Boolean(row[`${mySide}_hole_submitted`]);
+      const alreadyChoseCard = Boolean(row[`${mySide}_card_confirmed`]);
+      if (alreadySubmitted || alreadyChoseCard) {
+        submittedHolesRef.current[hn] = true;
+        return;
+      }
+      if (!hasStrokeInput(row[`${mySide}_strokes`])) return;
+      submittedHolesRef.current[hn] = true;
+      queueMatchHoleWrite({ matchId: match.id, holeNumber: hn, patch: { [`${mySide}_hole_submitted`]: true } });
+    });
+  }, [rowsByHole, mySide, match.id]);
+
+  // Marcador — totales corriendo y qué hoyos siguen pendientes de resolver.
+  const holeSummaries = useMemo(() => {
+    const rows = Array.from({ length: total }, (_, i) => {
+      const hn = i + 1;
+      const row = rowsByHole[hn] || { hole_number: hn };
+      const v = deriveHoleView(row, mySide);
+      const started = hasStrokeInput(row[`${mySide}_strokes`]) || hasStrokeInput(row[`${rivalSide}_strokes`]) || Boolean(v.my.card);
+      const pending = started && !v.my.cardApplied;
+      return { holeNumber: hn, view: v, pending };
+    });
+    return rows.reduce((acc, r) => {
+      const prev = acc[acc.length - 1];
+      const runningMe = (prev?.runningMe || 0) + (r.view.my.stableford || 0);
+      const runningRival = (prev?.runningRival || 0) + (r.view.rival.stableford || 0);
+      acc.push({ ...r, runningMe, runningRival });
+      return acc;
+    }, []);
+  }, [rowsByHole, mySide, rivalSide, total]);
+
+  const playerTotal = holeSummaries[holeSummaries.length - 1]?.runningMe || 0;
+  const rivalTotal = holeSummaries[holeSummaries.length - 1]?.runningRival || 0;
+  const currentPending = holeSummaries[hole]?.pending || false;
+  const priorSummary = hole > 0 ? holeSummaries[hole - 1] : null;
+  const isBehind = priorSummary ? priorSummary.runningMe < priorSummary.runningRival : false;
+
+  if (!matchCourse) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <header className="px-5 pt-5 pb-3 max-w-[900px] mx-auto w-full">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="px-5 flex-1 max-w-[900px] mx-auto w-full flex items-center">
+          <Card className="p-5 w-full">
+            <EmptyState icon={Flag} title="Campo no encontrado" description="No se pudo cargar la tarjeta de este campo." action={<SecondaryButton onClick={onCancel}>Volver a partidas</SecondaryButton>} />
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Selección de mazo (D9): si todavía no he elegido mis cartas para esta
+  // partida (p.ej. soy el rival, la partida ya la creó el otro jugador),
+  // hace falta elegir antes de jugar. Visible al rival una vez elegido —
+  // sin ocultar, la habilidad está en el timing, no en el secreto del mazo.
+  if (deck.length !== required) {
+    const deckComplete = deckPicks.length === required;
+    const confirmDeckPicks = async () => {
+      if (deckPicks.length !== required) return;
+      setConfirmingDeck(true);
+      setDeckError(null);
+      try {
+        await confirmDeck({ matchId: match.id, userId, selectedCards: deckPicks });
+        setDeck(deckPicks);
+      } catch (err) {
+        setDeckError(err?.message || "No se pudo guardar tu mazo. Inténtalo de nuevo.");
+      } finally {
+        setConfirmingDeck(false);
+      }
+    };
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#F3F4F6] via-[#FAF8F1] to-[#FAF8F1] px-4 sm:px-6 pt-6 pb-6 space-y-5">
+        <div className="flex items-center gap-3">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white shadow-surface flex items-center justify-center active:scale-95 transition">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">vs {rivalName}</p>
+            <h1 className="text-[26px] font-black tracking-tight text-slate-950 leading-tight">Elige tus cartas</h1>
+            <p className="text-[13px] text-slate-500 font-semibold mt-0.5">Tu rival verá qué cartas eliges — el secreto está en cuándo las juegas.</p>
+          </div>
+        </div>
+        <Card className="p-5 rounded-[30px] bg-white ring-black/5 shadow-surface">
+          <p className="text-[13px] font-bold text-slate-900">{deckPicks.length}/{required} elegidas</p>
+        </Card>
+        <div className="grid grid-cols-2 gap-3.5">
+          {CARDS.map((c) => (
+            <BirdixCard
+              key={c.id}
+              card={c}
+              selected={deckPicks.includes(c.id)}
+              onClick={() =>
+                setDeckPicks((curr) => {
+                  if (curr.includes(c.id)) return curr.filter((x) => x !== c.id);
+                  if (curr.length >= required) return curr;
+                  return [...curr, c.id];
+                })
+              }
+            />
+          ))}
+        </div>
+        {deckError && <p className="text-[12px] text-[#A8543F] font-semibold text-center">{deckError}</p>}
+        <button
+          onClick={confirmDeckPicks}
+          disabled={!deckComplete || confirmingDeck}
+          className="w-full rounded-[24px] bg-[#00703a] px-5 py-4 text-white shadow-[0_18px_36px_rgba(1,79,42,0.22)] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-between active:scale-[0.985] transition-all duration-200"
+        >
+          <span className="flex items-center gap-2 font-black text-[15px]">
+            <Check size={18} strokeWidth={2.5} />
+            {confirmingDeck ? "Guardando…" : "Confirmar mazo"}
+          </span>
+          <ArrowRight size={18} strokeWidth={2.5} />
+        </button>
+      </div>
+    );
+  }
+
+  if (loadingHoles) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-slate-500 font-semibold text-sm">Cargando partida…</p>
+      </div>
+    );
+  }
+
+  const finish = () => {
+    if (isFinishing) return;
+    setIsFinishing(true);
+    const result = calculateMatchWinner(playerTotal, rivalTotal);
+    const rankingDelta = calculateEloDelta(ranking, match?.rivalRank || 1000, result);
+    const finalMatch = {
+      ...match,
+      format: match?.format || "1 vs 1",
+      holes: total,
+      course: matchCourse?.name || match?.course,
+      date: match?.date || new Date().toISOString(),
+      rivalName,
+      playerHcp: match?.playerHcp ?? playerMatchHcp,
+      rivalHcp: match?.rivalHcp ?? rivalMatchHcp,
+      playerBirdixHcp: playerMatchHcp,
+      rivalBirdixHcp: rivalMatchHcp,
+      rivalRank: match?.rivalRank || 1000,
+      status: "finished",
+      result,
+      playerPoints: playerTotal,
+      rivalPoints: rivalTotal,
+      cardsUsed: holeSummaries.map((s) => s.view.my.card).filter(Boolean),
+      rankingDelta,
+      holeScores: holeSummaries,
+      finishedAt: new Date().toISOString(),
+      isRealMatch: true,
+      playerSide: mySide,
+    };
+    onFinish(finalMatch, rankingDelta);
+  };
+
+  const submitRivalStrokes = () => {
+    if (!hasStrokeInput(rivalStrokesInput)) return;
+    const par = clampNumber(currentCourseHole.par, 3, 6, 4);
+    const clamped = clampNumber(rivalStrokesInput, 1, 12, par);
+    queueMatchHoleWrite({
+      matchId: match.id,
+      holeNumber,
+      patch: { [`${rivalSide}_strokes`]: clamped, [`${rivalSide}_strokes_marker`]: userId },
+    });
+    setRivalStrokesInput("");
+  };
+
+  // Navegar de hoyo limpia los buffers locales de golpes — si no, un valor
+  // a medio escribir en el hoyo anterior se cuela como valor inicial del
+  // siguiente hoyo (ambos aún no tienen golpes registrados casi siempre).
+  const goToHole = (i) => {
+    setHole(clampNumber(i, 0, total - 1, hole));
+    setRivalStrokesInput("");
+    setSelfStrokesInput("");
+    setSelfStrokesOpen(false);
+  };
+
+  const submitSelfStrokes = () => {
+    if (!hasStrokeInput(selfStrokesInput)) return;
+    const par = clampNumber(currentCourseHole.par, 3, 6, 4);
+    const clamped = clampNumber(selfStrokesInput, 1, 12, par);
+    queueMatchHoleWrite({
+      matchId: match.id,
+      holeNumber,
+      patch: { [`${mySide}_strokes`]: clamped, [`${mySide}_strokes_marker`]: userId },
+    });
+    setSelfStrokesInput("");
+    setSelfStrokesOpen(false);
+  };
+
+  const playCard = (cardId) => {
+    queueMatchHoleWrite({
+      matchId: match.id,
+      holeNumber,
+      patch: { [`${mySide}_card`]: cardId, [`${mySide}_card_confirmed`]: true, [`${mySide}_hole_submitted`]: true },
+    });
+    setShowCardPicker(false);
+    const c = CARDS.find((x) => x.id === cardId);
+    if (c) setRevealCard(c);
+  };
+
+  const submitSecondShot = () => {
+    if (!hasStrokeInput(secondShotInput)) return;
+    const par = clampNumber(currentCourseHole.par, 3, 6, 4);
+    const clamped = clampNumber(secondShotInput, 1, 12, par);
+    queueMatchHoleWrite({
+      matchId: match.id,
+      holeNumber,
+      patch: {
+        [`${mySide}_strokes`]: clamped,
+        [`${mySide}_card`]: "second-shot",
+        [`${mySide}_card_confirmed`]: true,
+        [`${mySide}_hole_submitted`]: true,
+      },
+    });
+    setSecondShotInput("");
+    setSecondShotPrompt(false);
+  };
+
+  const cardStatusPill = (() => {
+    if (!view.my.card) return null;
+    const c = CARDS.find((x) => x.id === view.my.card);
+    if (!c) return null;
+    if (view.my.cardCancelledReason) return { c, label: "Anulada por Bloqueo" };
+    if (!view.cardsRevealed) return { c, label: "En privado — esperando al rival" };
+    return { c, label: null };
+  })();
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#F3F4F6] via-[#F7FAF7] to-white flex flex-col">
+      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-gradient-to-b from-[#F3F4F6] to-[#F3F4F6]/85 backdrop-blur-xl">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white shadow-surface flex items-center justify-center active:scale-95 transition">
+            <X size={18} />
+          </button>
+          <div className="text-center">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida en curso</p>
+            <p className="font-black text-slate-950 text-[16px] leading-tight mt-0.5">vs {rivalName}</p>
+          </div>
+          {/* Indicador de reconexión (DESIGN.md "Estado de conexión") — hueco
+              de simetría ya reservado, sin texto ambiental. */}
+          <div className="h-10 w-10 flex items-center justify-center">
+            {connectionStatus === "reconnecting" && (
+              <span className="h-1.5 w-1.5 rounded-full bg-[#9CA3AF] animate-pulse" aria-label="Reconectando" />
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-[26px] bg-gradient-to-br from-slate-900 to-slate-950 shadow-[0_20px_44px_rgba(15,23,42,0.28)] px-1 py-4 flex items-stretch">
+          <div className="flex-1 text-center px-2">
+            <p className="text-[10px] uppercase tracking-wider text-[#6EE7B7] font-bold">Tú</p>
+            <p className="font-display text-[30px] text-white leading-none mt-1.5">{playerTotal}</p>
+            <p className="text-[9px] text-white/35 font-bold mt-1">HCP {formatBirdixHcp(playerMatchHcp)}</p>
+          </div>
+          <div className="w-px bg-white/10 my-1" />
+          <div className="flex-[1.3] text-center px-2 flex flex-col items-center justify-center">
+            <div className="flex items-center gap-1 text-white/40">
+              <Flag size={10} />
+              <p className="text-[9px] uppercase tracking-widest font-bold">Hoyo</p>
+            </div>
+            <p className="font-display text-[34px] text-white leading-none mt-0.5">
+              {holeNumber}<span className="text-white/30 text-[15px]">/{total}</span>
+            </p>
+            <p className="text-[9px] text-white/40 font-semibold mt-1">Par {currentCourseHole.par} · Índice {currentCourseHole.strokeIndex}</p>
+          </div>
+          <div className="w-px bg-white/10 my-1" />
+          <div className="flex-1 text-center px-2">
+            <p className="text-[10px] uppercase tracking-wider text-[#F4B2A6] font-bold">{rivalName.split(" ")[0]}</p>
+            <p className="font-display text-[30px] text-white leading-none mt-1.5">{rivalTotal}</p>
+            <p className="text-[9px] text-white/35 font-bold mt-1">HCP {formatBirdixHcp(rivalMatchHcp)}</p>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
+        <div className="glow-behind rounded-[30px]" style={{ "--glow-color": "var(--glow-green)" }}>
+          <Card className="p-6 rounded-[30px] bg-white ring-black/5 shadow-surface text-center">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Puntos del hoyo</span>
+            {currentPending ? (
+              <p className="text-[13px] text-slate-400 font-bold mt-4">Pendiente — esperando a que se resuelva</p>
+            ) : (
+              <div className="flex items-center justify-center gap-7 mt-3">
+                <div>
+                  <p className="font-display text-[64px] text-[#00703a] leading-none">{view.my.stableford}</p>
+                  <p className="text-[11px] text-slate-500 font-bold mt-1.5">Tú</p>
+                </div>
+                <p className="font-display text-[26px] text-slate-300 mt-2">–</p>
+                <div>
+                  <p className="font-display text-[64px] text-[#A8543F] leading-none">{view.rival.stableford}</p>
+                  <p className="text-[11px] text-slate-500 font-bold mt-1.5">{rivalName.split(" ")[0]}</p>
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <Card className="p-5 space-y-3 ring-slate-200 shadow-surface">
+          <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Golpes del hoyo</span>
+          <ScoreInput
+            label={`Golpes de ${rivalName.split(" ")[0]}`}
+            value={hasStrokeInput(rivalStrokesInput) ? rivalStrokesInput : (view.rival.strokes ?? "")}
+            onChange={setRivalStrokesInput}
+            tone="primary"
+          />
+          {hasStrokeInput(rivalStrokesInput) && rivalStrokesInput !== (view.rival.strokes ?? "") && (
+            <SecondaryButton onClick={submitRivalStrokes}>Guardar golpes de {rivalName.split(" ")[0]}</SecondaryButton>
+          )}
+
+          {hasStrokeInput(view.my.strokes) ? (
+            <div className="rounded-2xl bg-slate-50 px-3 py-2.5 flex items-center justify-between">
+              <p className="text-[12px] text-slate-600 font-semibold">Tus golpes: <span className="font-black text-slate-900">{view.my.strokes}</span></p>
+            </div>
+          ) : selfStrokesOpen ? (
+            <>
+              <ScoreInput label="Tus golpes (apuntados por ti)" value={selfStrokesInput} onChange={setSelfStrokesInput} />
+              <SecondaryButton onClick={submitSelfStrokes}>Guardar</SecondaryButton>
+            </>
+          ) : (
+            <button onClick={() => setSelfStrokesOpen(true)} className="text-[12px] text-slate-400 font-bold underline underline-offset-2 text-left">
+              {rivalName.split(" ")[0]} no ha apuntado tus golpes todavía — apuntarlos yo
+            </button>
+          )}
+        </Card>
+
+        {cardStatusPill ? (
+          <div className={`${cardStatusPill.c.accent} rounded-[22px] p-4 ring-1 ring-black/5 shadow-surface flex items-center gap-3`}>
+            <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center"><cardStatusPill.c.icon size={18} strokeWidth={2.5} /></div>
+            <div className="flex-1">
+              <p className="text-[9px] uppercase tracking-wider font-bold opacity-70">Carta jugada</p>
+              <p className="font-black text-[15px] leading-tight">{cardStatusPill.c.name}</p>
+              {cardStatusPill.label && <p className="text-[11px] font-bold opacity-80 mt-0.5">{cardStatusPill.label}</p>}
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowCardPicker(true)} className="w-full rounded-[22px] bg-white ring-1 ring-dashed ring-[#D67560]/40 shadow-surface px-4 py-4 text-left active:scale-[0.99] transition flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-black text-slate-900">🃏 Jugar una carta</p>
+              <p className="text-[12px] text-slate-500 mt-0.5">{Math.max(0, deck.length - usedCardIds.length)} disponibles este hoyo</p>
+            </div>
+            <ChevronRight size={16} className="text-[#D67560]" />
+          </button>
+        )}
+
+        {view.cardsRevealed && view.rival.card && (
+          <div className="rounded-[18px] bg-slate-50 ring-1 ring-slate-100 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Carta del rival</p>
+            <p className="text-[13px] font-black text-slate-700 mt-0.5">
+              {CARDS.find((c) => c.id === view.rival.card)?.name || view.rival.card}
+              {view.rival.cardCancelledReason ? " — anulada por tu Bloqueo" : ""}
+            </p>
+          </div>
+        )}
+
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 px-1">Tu mazo</p>
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            {deck.map((id) => {
+              const c = CARDS.find((x) => x.id === id);
+              if (!c) return null;
+              const isCurrent = view.my.card === id;
+              const isUsed = usedCardIds.includes(id) && !isCurrent;
+              return (
+                <button
+                  key={id}
+                  onClick={() => !view.my.card && setShowCardPicker(true)}
+                  className={`flex-shrink-0 h-16 w-16 rounded-2xl flex flex-col items-center justify-center gap-1 transition active:scale-95 ${isUsed ? "bg-slate-100 opacity-50" : c.accent} ${isCurrent ? "ring-2 ring-[#00703a] shadow-glow-green" : "ring-1 ring-black/5 shadow-surface"}`}
+                >
+                  <c.icon size={16} strokeWidth={2.5} />
+                  <p className="text-[8px] font-black text-center leading-tight px-1">{c.name}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black mb-2 px-1">Marcador de la ronda</p>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
+            {holeSummaries.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => goToHole(i)}
+                className={`flex-shrink-0 h-14 w-11 rounded-2xl flex flex-col items-center justify-center transition active:scale-95 ${i === hole
+                  ? "bg-[#00703a] text-white shadow-glow-green"
+                  : s.pending
+                    ? "bg-white ring-1 ring-[#CA8A04]/30 text-slate-700 shadow-surface"
+                    : "bg-white ring-1 ring-slate-100 text-slate-500 shadow-surface"
+                  }`}
+              >
+                <p className={`text-[9px] font-bold ${i === hole ? "text-white/60" : "text-slate-400"}`}>{i + 1}</p>
+                <p className="text-[13px] font-display leading-none mt-0.5">
+                  {s.pending ? "…" : s.view.my.cardApplied ? s.view.my.stableford : "–"}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 z-30 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
+        <div className="max-w-[900px] mx-auto px-5 py-3 flex items-center gap-2">
+          <button
+            onClick={() => goToHole(hole - 1)}
+            disabled={hole === 0}
+            className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center disabled:opacity-30 active:scale-95 transition"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          {hole < total - 1 ? (
+            <PrimaryButton onClick={() => goToHole(hole + 1)} icon={ArrowRight}>Siguiente hoyo</PrimaryButton>
+          ) : (
+            <PrimaryButton onClick={finish} icon={Trophy} tone="dark" disabled={isFinishing}>
+              {isFinishing ? "Guardando…" : "Finalizar partida"}
+            </PrimaryButton>
+          )}
+        </div>
+      </div>
+
+      {showCardPicker && (
+        <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setShowCardPicker(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-[420px] p-4 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-black text-slate-900 text-lg">Usar carta en hoyo {holeNumber}</h3>
+              <button onClick={() => setShowCardPicker(false)} className="h-9 w-9 rounded-full bg-slate-100 flex items-center justify-center"><X size={18} /></button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-3">Selección privada — el rival no la verá hasta que ambos hayáis decidido.</p>
+            <div className="grid grid-cols-2 gap-3">
+              {deck
+                .filter((id) => {
+                  if (usedCardIds.includes(id)) return false;
+                  const c = CARDS.find((x) => x.id === id);
+                  if (!c) return false;
+                  if (id === "second-shot") {
+                    if (!hasStrokeInput(view.my.strokes)) return false; // reacción: solo tras tu golpe
+                  } else if (view.my.holeSubmitted) {
+                    return false; // Decision 4: ventana cerrada — solo Segundo Golpe sigue jugable tras tu golpe
+                  }
+                  return isCardPlayable(c, { isBehind, alreadyPlayedThisHole: Boolean(view.my.card), rivalShieldActive: view.rival.card === "shield" });
+                })
+                .map((id) => {
+                  const c = CARDS.find((x) => x.id === id);
+                  if (!c) return null;
+                  return (
+                    <BirdixCard
+                      key={id}
+                      card={c}
+                      selected={view.my.card === id}
+                      onClick={() => {
+                        if (id === "second-shot") {
+                          setShowCardPicker(false);
+                          setSecondShotPrompt(true);
+                        } else {
+                          playCard(id);
+                        }
+                      }}
+                      size="sm"
+                    />
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {secondShotPrompt && (
+        <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setSecondShotPrompt(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-[420px] p-5 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-black text-slate-900 text-lg mb-1">Segundo Golpe</h3>
+            <p className="text-[12px] text-slate-500 mb-3">Repites el golpe — el segundo cuenta como definitivo, aunque salga peor.</p>
+            <ScoreInput label="Golpes totales tras repetir" value={secondShotInput} onChange={setSecondShotInput} />
+            <div className="mt-3">
+              <PrimaryButton onClick={submitSecondShot} disabled={!hasStrokeInput(secondShotInput)}>Confirmar Segundo Golpe</PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revealCard && (
+        <div className="fixed inset-0 z-50 bg-slate-900/65 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setRevealCard(null)}>
+          <div className="glow-behind" style={{ "--glow-color": "var(--glow-coral)" }}>
+            <div
+              className={`w-[180px] h-[240px] rounded-[26px] ${revealCard.accent} flex flex-col items-center justify-center text-center px-4 shadow-2xl`}
+              style={{ animation: "birdix-card-flip 380ms cubic-bezier(.2,.8,.2,1) both" }}
+            >
+              <div className="h-12 w-12 rounded-2xl bg-white/70 backdrop-blur flex items-center justify-center mb-3">
+                <revealCard.icon size={22} strokeWidth={2.5} />
+              </div>
+              <p className="font-display text-[19px] leading-tight">{revealCard.name}</p>
+              <p className="text-[10px] uppercase tracking-wider opacity-70 font-bold mt-1">{revealCard.type}</p>
+            </div>
+          </div>
+          <p className="absolute bottom-16 text-white/90 text-[13px] font-bold">¡Carta jugada! Toca para continuar.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------------------
    14.5 · SCREEN · RESULTADO (el pago emocional de la partida)
    --------------------------------------------------------------------------*/
 
@@ -3410,6 +4077,31 @@ export default function BirdixApp() {
       unsub();
     };
   }, []);
+
+  /* --- Descubrir partida activa real (D7) ---
+     Sin esto, el rival (quien no creó la partida) nunca se entera de que
+     existe: activeMatch hoy solo lo pone quien la crea, localmente. Se
+     comprueba al arrancar y cada vez que se entra en la pestaña de
+     partidas mientras no haya ninguna activa — cubre tanto "abro la app y
+     ya me habían retado" como "mi rival me acaba de crear la partida
+     mientras yo ya estaba dentro". */
+  useEffect(() => {
+    if (!state.hydrated || !state.user?.id || state.activeMatch) return;
+    if (tab !== "matches" && tab !== "home") return;
+    let cancelled = false;
+    listMyActiveMatches(state.user.id)
+      .then((rows) => {
+        if (cancelled || !rows.length) return;
+        dispatch({ type: "SET_ACTIVE_MATCH", payload: rows[0] });
+      })
+      .catch(() => {
+        // Sin partida activa real, o sin cobertura — no es un error que
+        // haya que mostrar, simplemente no hay nada nuevo que descubrir.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.hydrated, state.user?.id, state.activeMatch, tab]);
 
   /* --- Persistencia --- */
   useEffect(() => {
@@ -3586,6 +4278,15 @@ export default function BirdixApp() {
           <TeamStablefordScreen
             match={state.activeMatch}
             selectedCards={state.selectedCards}
+            ranking={state.ranking}
+            playerBirdixHcp={state.profile?.birdixHcp ?? state.profile?.hcp}
+            onFinish={handleFinishMatch}
+            onCancel={() => setPlaying(false)}
+          />
+        ) : state.activeMatch.isRealMatch ? (
+          <RealMatchPlayScreen
+            match={state.activeMatch}
+            userId={state.user?.id}
             ranking={state.ranking}
             playerBirdixHcp={state.profile?.birdixHcp ?? state.profile?.hcp}
             onFinish={handleFinishMatch}

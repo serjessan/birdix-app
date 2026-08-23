@@ -72,6 +72,67 @@ export const getMatchContext = async (matchId) => {
 };
 
 /**
+ * Todas las filas de match_holes de una partida, en orden — hidratación
+ * inicial de MatchPlayScreen (D7) al entrar en la pantalla; las
+ * actualizaciones en vivo llegan luego vía useMatchRealtime, esto solo
+ * cubre el progreso que ya existiera antes de que este dispositivo abriera
+ * la partida.
+ */
+export const listMatchHoles = async (matchId) => {
+  const { data, error } = await supabase.from("match_holes").select("*").eq("match_id", matchId).order("hole_number");
+  if (error) throw error;
+  return data;
+};
+
+/**
+ * Partidas activas donde soy jugador — sin esto, el rival (quien no creó la
+ * partida) no tiene forma de descubrirla nunca (D7, gap señalado en el eng
+ * review y no resuelto hasta ahora). RLS de `matches` ya filtra a las
+ * partidas donde soy creador o jugador, así que no hace falta un .eq extra.
+ * Une course/match_players/profiles en una sola consulta (recursos
+ * embebidos de PostgREST vía las FK ya existentes en el esquema).
+ */
+export const listMyActiveMatches = async (userId) => {
+  const { data, error } = await supabase
+    .from("matches")
+    .select(`
+      id, course_id, status, format, started_at,
+      courses ( name, location ),
+      match_players ( side, user_id, points_before, birdix_hcp_at_match, selected_cards, profiles ( full_name ) ),
+      match_holes ( hole_number )
+    `)
+    .eq("status", "active")
+    .order("started_at", { ascending: false });
+  if (error) throw error;
+
+  return data
+    .map((row) => {
+      const me = row.match_players.find((p) => p.user_id === userId);
+      const rival = row.match_players.find((p) => p.user_id !== userId);
+      if (!me || !rival) return null; // no debería pasar bajo RLS, pero no reventar si pasa
+      return {
+        id: row.id,
+        courseId: row.course_id,
+        course: row.courses?.name,
+        holes: row.match_holes.length,
+        playerSide: me.side,
+        playerBirdixHcp: me.birdix_hcp_at_match,
+        rivalId: rival.user_id,
+        rivalName: rival.profiles?.full_name || "Rival",
+        rivalRank: toRankingPoints(rival.points_before),
+        rivalBirdixHcp: rival.birdix_hcp_at_match,
+        rivalHcp: rival.birdix_hcp_at_match,
+        selectedCards: me.selected_cards || [],
+        matchType: "1v1",
+        format: "1 vs 1",
+        status: "pending",
+        isRealMatch: true,
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
  * Confirma el resultado de esta partida desde tu lado. Cuando ambos
  * jugadores han confirmado, calcula (con rango.js, no en SQL) el nuevo
  * rango/hcp/streak de los 2 y lo aplica vía apply_match_result — gateado
@@ -157,4 +218,19 @@ export const confirmMatchResult = async ({
   if (applyError) throw applyError;
 
   return { applied: true, newPoints: newPointsMe, delta: playerDelta, newBirdixHcp: playerNewHcp };
+};
+
+/**
+ * Confirma tu mazo para una partida ya creada — el flujo de Player B (D7,
+ * T8): el mazo es visible al rival (D9) pero cada uno lo elige por su
+ * propio dispositivo. RLS de match_players ya permite a cada jugador
+ * escribir su propia fila (PR1 D3), sin necesitar ningún RPC.
+ */
+export const confirmDeck = async ({ matchId, userId, selectedCards }) => {
+  const { error } = await supabase
+    .from("match_players")
+    .update({ selected_cards: selectedCards, deck_confirmed_at: new Date().toISOString() })
+    .eq("match_id", matchId)
+    .eq("user_id", userId);
+  if (error) throw error;
 };

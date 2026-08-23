@@ -33,14 +33,48 @@ el cálculo de hcp compartido) — corregida; y `matchSync.js` no comprobaba fil
 afectadas, así que un UPDATE sobre una fila inexistente fallaba en silencio —
 corregido. Ver
 `~/.gstack/projects/usuario/usuario-main-eng-review-d7-20260821.md` para el detalle
-completo. **Pendiente real:** nada de esto está implementado todavía — es plan de
-arquitectura, no código.
+completo.
+
+**Estado — D7 construido y probado el 23 ago 2026:** implementado como un componente
+nuevo, `RealMatchPlayScreen` (`App.jsx`, tras `MatchPlayScreen`), en vez de reescribir
+`MatchPlayScreen` in situ — así el 2vs2/legacy sigue funcionando exactamente igual
+mientras Approach B no llegue a esa pantalla. Cubre T1-T9 del eng review: RLS de
+`match_players` corregida y verificada en vivo (creador puede crear, el otro jugador
+lee su fila incluidas `selected_cards`, un no-participante ve 0 filas); `matchSync.js`
+ahora falla si un UPDATE no afecta ninguna fila en vez de vaciar la cola en silencio;
+selección de mazo por dispositivo, visible al rival (D9); golpes cruzados con
+fallback de auto-registro; resolución conjunta por cliente escribiendo solo columnas
+propias, con Escudo como única carta de revelado inmediato (necesita verse antes de
+que el rival elija, D11); navegación y "Finalizar partida" nunca bloqueados;
+indicador de reconexión wireado al punto de la cabecera; `cards_revealed` se escribe
+cuando ambos han decidido. Se añadió además `listMyActiveMatches` (`src/lib/api/
+matches.js`) — sin ella el jugador que no crea la partida no tenía forma de
+descubrirla, un hueco que no estaba en el eng review original. 117/117 tests, build y
+lint limpios (línea base de 25 problemas preexistentes en `App.jsx` sin subir).
+
+Durante la revisión manual de T10 (sin jsdom/RTL en el repo, así que sin forma de
+hacer click real) se encontraron y corrigieron 3 bugs que no estaban en el eng
+review: (1) si ningún jugador jugaba carta en un hoyo, `hole_submitted` nunca se
+marcaba y ese hoyo no se resolvía jamás — corregido cerrando la ventana de elección
+en cuanto entra el primer golpe, con Segundo Golpe como única excepción explícita en
+el selector de cartas (Decision 4); (2) el campo "Golpes de {rival}" tenía el `value`
+atado al valor ya persistido en vez del buffer local de edición — el jugador no podía
+escribir ni usar los steppers +/- del todo, la interacción más usada de toda la
+pantalla estaba rota; (3) navegar de hoyo no limpiaba los buffers locales de golpes,
+así que un valor a medio escribir en un hoyo se colaba como valor inicial del
+siguiente.
+
+**Pendiente real:** sin prueba manual de 2 dispositivos reales (no hay forma de
+hacerlo en este entorno) — T10 solo puede completarse hoy con revisión de código
+línea a línea + tests automáticos, no con un click-through real. También sigue
+pendiente: si el rival crea la partida mientras ya estás en la pestaña "Partidas",
+no la descubres hasta cambiar de pestaña o recargar (la búsqueda de partidas activas
+no tiene canal Realtime propio, solo se dispara al montar/cambiar de pestaña) — bajo
+riesgo para el grupo cerrado del fundador, pero real.
 
 **Effort:** L
 **Priority:** P1
-**Depends on:** Su propio `/plan-eng-review` antes de implementar — no meterlo dentro
-de otra sesión de review ya en marcha sobre otra cosa (mismo razonamiento que separó
-Approach B en PR1/PR2).
+**Depends on:** Ninguna — construido.
 
 ### Columna sin uso: card_cancelled_reason
 
@@ -124,15 +158,21 @@ partida y actualizar Rango) ya está construido y probado: migraciones aplicadas
 Supabase (`match_players` RLS UPDATE/creación duplicada corregida, RPCs `create_match`/
 `apply_match_result`/`get_match_context`, ambas probadas en vivo con cuentas reales,
 no solo con mocks), `src/lib/api/matches.js` + `courses.js` (25 tests), `MatchesScreen`
-sustituye FAKE_RIVALS/COURSES por datos reales. `MatchPlayScreen` sigue sin tocar a
-propósito (D7, ver TODO "Rediseñar MatchPlayScreen" arriba) — sigue calculando
-localmente y ahora llama a `confirmMatchResult` al cerrar, pero el 2º jugador no puede
-confirmar de verdad hasta que D7 le dé su propia sesión. Durante la implementación se
+sustituye FAKE_RIVALS/COURSES por datos reales. Durante la implementación se
 descubrieron y corrigieron 2 huecos que no estaban en el eng review original:
 `match_players`/`match_holes`/`match_confirmations` ya tenían datos de prueba de
 mayo-junio 2026 (limpiados, ver decisión en gstack), y `match_confirmations` no tenía
 restricción única por jugador (añadida). El split a carpetas (`components/`,
 `screens/`) sigue sin empezar.
+
+**Estado — D7 completado el 23 ago 2026:** partidas 1vs1 reales ya se juegan con
+`RealMatchPlayScreen`, un componente nuevo — no una reescritura de `MatchPlayScreen`
+in situ, que sigue intacto para 2vs2/legacy (ver TODO "Rediseñar MatchPlayScreen"
+arriba para el detalle completo). `src/domain/stableford.js` y
+`src/domain/matchHoleView.js` se extrajeron de la matemática inline de `App.jsx`
+durante esta pieza — el split completo a carpetas sigue pendiente, pero ya no es
+"todo o nada": la extracción se está haciendo pieza a pieza, cada vez que una nueva
+funcionalidad necesita reutilizar lógica que antes solo vivía inline.
 
 **Effort:** XL (el split de carpetas es lo único que queda de esta pieza)
 **Priority:** P1
@@ -189,15 +229,12 @@ comprobar que esa lectura de columnas es la que el resto del sistema espera. Rev
 esa función específicamente cuando se construya esa pantalla — `resolveHoleCards` en
 sí (la parte sin Supabase) no depende de esta interpretación y no hace falta tocarla.
 
-**Pendiente real — T1, T2, T3 y T4 están todos completos y probados, pero nada los
-conecta todavía:** `MatchPlayScreen` (`App.jsx`) sigue con su lógica local de siempre,
-sin llamar a `queueMatchHoleWrite`/`initMatchSync`, `useMatchRealtime`,
-`resolveHoleCards`/`resolveMatchHoleRow`, ni a los nuevos campos de contexto de
-`cards.js`. En la app real las 3 cartas, el guardado offline, Realtime y el indicador
-de reconexión se comportan exactamente igual que antes de esta sesión hasta que se
-haga ese wiring — que es, a propósito, el trabajo de la reestructuración completa
-(Approach B, ver el TODO de arquitectura más arriba) y no algo que quepa bien en un
-`MatchPlayScreen` de 3400+ líneas sin reestructurar primero.
+**Estado — conectado el 23 ago 2026 (D7):** `RealMatchPlayScreen` (el reemplazo de
+`MatchPlayScreen` para partidas reales, ver TODO "Rediseñar MatchPlayScreen" arriba)
+sí llama a `queueMatchHoleWrite`, `useMatchRealtime` y `resolveHoleCards` de verdad.
+Escudo, Bloqueo y Segundo Golpe ya tienen efecto real en cualquier partida 1vs1 real
+creada desde el 23 de agosto. `MatchPlayScreen` (legacy/2vs2) sigue exactamente igual
+que antes — sin tocar a propósito, sigue sin este wiring.
 
 **Why:** Son 3 de las 10 cartas del reglamento oficial y hoy no hacen nada más allá de aparecer en el marcador — necesitan que ambos jugadores vean la misma jugada en el mismo instante (Escudo bloquea cartas rivales ese hoyo, Bloqueo cancela una carta concreta, Segundo Golpe repite un golpe), lo cual requiere sincronización en tiempo real.
 
@@ -244,9 +281,11 @@ Decision 2/3 de ese documento. **Patrón visual cerrado el 19 ago 2026 en
 ya no está bloqueado en diseño. **T3 completado el 19 ago 2026:**
 `useMatchRealtime(matchId, {onChange})` (`src/hooks/useMatchRealtime.js`) ya devuelve
 exactamente el estado que este indicador necesita — `status: 'connected' |
-'reconnecting'` — así que la fuente de datos ya existe. Pendiente real: nadie ha puesto
-el punto de 6px en `App.jsx:2763` todavía ni ha llamado al hook desde `MatchPlayScreen`
-— eso llega con T4, cuando esa pantalla empiece a usar Realtime de verdad.
+'reconnecting'` — así que la fuente de datos ya existe.
+
+**Estado — construido el 23 ago 2026 (D7):** el punto de 6px ya está en la cabecera de
+`RealMatchPlayScreen`, wireado a `useMatchRealtime`. `MatchPlayScreen` (legacy/2vs2)
+sigue con el hueco vacío, sin tocar a propósito.
 
 **Effort:** XS
 **Priority:** P2

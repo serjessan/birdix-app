@@ -81,12 +81,18 @@ async function flushKey(key) {
 
   inFlight.add(key);
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("match_holes")
       .update(entry.patch)
       .eq("match_id", entry.matchId)
-      .eq("hole_number", entry.holeNumber);
+      .eq("hole_number", entry.holeNumber)
+      .select("hole_number");
     if (error) throw error;
+    // Un UPDATE que no coincide con ninguna fila no es un error para
+    // PostgREST — se trata igual que un fallo de red y se reintenta,
+    // en vez de vaciar el outbox pensando que guardó algo que en
+    // realidad nunca llegó a escribirse (D7, D15).
+    if (!data || data.length === 0) throw new Error(`match_holes row not found for ${key}`);
 
     // Se quita del outbox solo lo que se acaba de confirmar guardado — si
     // una escritura nueva llegó para la misma clave mientras esta petición

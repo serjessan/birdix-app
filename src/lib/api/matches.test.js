@@ -50,6 +50,137 @@ describe("findRivalCandidates", () => {
   });
 });
 
+describe("listMatchHoles", () => {
+  it("selects all columns for the match, ordered by hole_number", async () => {
+    const order = vi.fn().mockResolvedValue({ data: [{ hole_number: 1 }, { hole_number: 2 }], error: null });
+    const eq = vi.fn(() => ({ order }));
+    const select = vi.fn(() => ({ eq }));
+    fromMock.mockReturnValue({ select });
+
+    const { listMatchHoles } = await import("./matches");
+    const result = await listMatchHoles("match-1");
+
+    expect(fromMock).toHaveBeenCalledWith("match_holes");
+    expect(select).toHaveBeenCalledWith("*");
+    expect(eq).toHaveBeenCalledWith("match_id", "match-1");
+    expect(order).toHaveBeenCalledWith("hole_number");
+    expect(result).toEqual([{ hole_number: 1 }, { hole_number: 2 }]);
+  });
+
+  it("throws on a Supabase error", async () => {
+    const order = vi.fn().mockResolvedValue({ data: null, error: new Error("network") });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ order }) }) });
+
+    const { listMatchHoles } = await import("./matches");
+    await expect(listMatchHoles("match-1")).rejects.toThrow("network");
+  });
+});
+
+describe("listMyActiveMatches", () => {
+  const mockActiveMatchesQuery = (rows) => {
+    const order = vi.fn().mockResolvedValue({ data: rows, error: null });
+    const eq = vi.fn(() => ({ order }));
+    const select = vi.fn(() => ({ eq }));
+    return { select, eq, order };
+  };
+
+  it("normalizes an active match row into the shape the app expects, from the creator's side", async () => {
+    const { select } = mockActiveMatchesQuery([
+      {
+        id: "match-1",
+        course_id: "c1",
+        status: "active",
+        format: "stableford_1v1",
+        started_at: "2026-08-23T00:00:00Z",
+        courses: { name: "La Valmuza", location: "Salamanca" },
+        match_players: [
+          { side: "player_a", user_id: "me", points_before: 1000, birdix_hcp_at_match: 18, selected_cards: ["double", "block"], profiles: { full_name: "Me" } },
+          { side: "player_b", user_id: "rival-1", points_before: 1120, birdix_hcp_at_match: 12.5, selected_cards: [], profiles: { full_name: "Carlos" } },
+        ],
+        match_holes: Array.from({ length: 9 }, (_, i) => ({ hole_number: i + 1 })),
+      },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyActiveMatches } = await import("./matches");
+    const result = await listMyActiveMatches("me");
+
+    expect(fromMock).toHaveBeenCalledWith("matches");
+    expect(result).toEqual([
+      {
+        id: "match-1",
+        courseId: "c1",
+        course: "La Valmuza",
+        holes: 9,
+        playerSide: "player_a",
+        playerBirdixHcp: 18,
+        rivalId: "rival-1",
+        rivalName: "Carlos",
+        rivalRank: 1120,
+        rivalBirdixHcp: 12.5,
+        rivalHcp: 12.5,
+        selectedCards: ["double", "block"],
+        matchType: "1v1",
+        format: "1 vs 1",
+        status: "pending",
+        isRealMatch: true,
+      },
+    ]);
+  });
+
+  it("normalizes correctly from the non-creator's side too (playerSide: player_b)", async () => {
+    const { select } = mockActiveMatchesQuery([
+      {
+        id: "match-1",
+        course_id: "c1",
+        status: "active",
+        format: "stableford_1v1",
+        started_at: "2026-08-23T00:00:00Z",
+        courses: { name: "La Valmuza", location: "Salamanca" },
+        match_players: [
+          { side: "player_a", user_id: "rival-1", points_before: 1000, birdix_hcp_at_match: 18, selected_cards: ["double"], profiles: { full_name: "Carlos" } },
+          { side: "player_b", user_id: "me", points_before: 1000, birdix_hcp_at_match: 18, selected_cards: [], profiles: { full_name: "Me" } },
+        ],
+        match_holes: Array.from({ length: 9 }, (_, i) => ({ hole_number: i + 1 })),
+      },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyActiveMatches } = await import("./matches");
+    const result = await listMyActiveMatches("me");
+
+    expect(result[0].playerSide).toBe("player_b");
+    expect(result[0].rivalId).toBe("rival-1");
+    expect(result[0].rivalName).toBe("Carlos");
+  });
+
+  it("drops a row where I'm not actually a participant instead of throwing", async () => {
+    const { select } = mockActiveMatchesQuery([
+      {
+        id: "match-1",
+        match_players: [
+          { side: "player_a", user_id: "someone-else", profiles: {} },
+          { side: "player_b", user_id: "someone-else-2", profiles: {} },
+        ],
+        match_holes: [],
+        courses: {},
+      },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyActiveMatches } = await import("./matches");
+    expect(await listMyActiveMatches("me")).toEqual([]);
+  });
+
+  it("throws on a Supabase error", async () => {
+    const order = vi.fn().mockResolvedValue({ data: null, error: new Error("network") });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ order }) }) });
+
+    const { listMyActiveMatches } = await import("./matches");
+    await expect(listMyActiveMatches("me")).rejects.toThrow("network");
+  });
+});
+
 describe("createMatch", () => {
   it("calls create_match RPC, then reads both sides via get_match_context, embeds rival info", async () => {
     rpcMock.mockImplementation((name) => {
@@ -282,5 +413,30 @@ describe("confirmMatchResult", () => {
 
     const { confirmMatchResult } = await import("./matches");
     await expect(confirmMatchResult(baseArgs)).rejects.toThrow("rejected");
+  });
+});
+
+describe("confirmDeck", () => {
+  it("updates my own match_players row (match_id + user_id), never someone else's", async () => {
+    const eq2 = vi.fn().mockResolvedValue({ error: null });
+    const eq1 = vi.fn(() => ({ eq: eq2 }));
+    const update = vi.fn(() => ({ eq: eq1 }));
+    fromMock.mockReturnValue({ update });
+
+    const { confirmDeck } = await import("./matches");
+    await confirmDeck({ matchId: "match-1", userId: "me", selectedCards: ["double", "block"] });
+
+    expect(fromMock).toHaveBeenCalledWith("match_players");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ selected_cards: ["double", "block"] }));
+    expect(eq1).toHaveBeenCalledWith("match_id", "match-1");
+    expect(eq2).toHaveBeenCalledWith("user_id", "me");
+  });
+
+  it("throws on a Supabase error", async () => {
+    const eq2 = vi.fn().mockResolvedValue({ error: new Error("RLS denied") });
+    fromMock.mockReturnValue({ update: () => ({ eq: () => ({ eq: eq2 }) }) });
+
+    const { confirmDeck } = await import("./matches");
+    await expect(confirmDeck({ matchId: "match-1", userId: "me", selectedCards: [] })).rejects.toThrow("RLS denied");
   });
 });
