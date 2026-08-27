@@ -183,6 +183,51 @@ describe("app cerrada con cola pendiente", () => {
   });
 });
 
+describe("mergeHydratedHoles", () => {
+  it("una foto REST se funde tal cual cuando ningún hoyo ha llegado ya por Realtime", async () => {
+    const { mergeHydratedHoles } = await importMatchSync();
+    const prev = { 1: { hole_number: 1, player_a_strokes: 4 } };
+    const rows = [{ hole_number: 2, player_a_strokes: 5 }];
+
+    const merged = mergeHydratedHoles(prev, rows, new Set());
+
+    expect(merged).toEqual({
+      1: { hole_number: 1, player_a_strokes: 4 },
+      2: { hole_number: 2, player_a_strokes: 5 },
+    });
+  });
+
+  it("D-investigate 25 ago: no pisa un hoyo cuyo UPDATE de Realtime ya llegó, aunque la foto REST sea más vieja", async () => {
+    const { mergeHydratedHoles } = await importMatchSync();
+    // El rival ya jugó su carta (llegó por Realtime antes de que resolviera
+    // la hidratación) — la foto REST en vuelo se pidió antes de esa escritura,
+    // así que trae el hoyo todavía sin carta.
+    const prev = { 3: { hole_number: 3, player_b_card: "shield", player_b_card_confirmed: true } };
+    const staleRow = { hole_number: 3, player_b_card: null, player_b_card_confirmed: false };
+
+    const merged = mergeHydratedHoles(prev, [staleRow], new Set([3]));
+
+    expect(merged[3]).toEqual(prev[3]);
+  });
+
+  it("hidrata con normalidad los hoyos que Realtime todavía no ha tocado, y respeta los que sí, en la misma foto", async () => {
+    const { mergeHydratedHoles } = await importMatchSync();
+    const prev = {
+      1: { hole_number: 1, player_a_strokes: 4 },
+      2: { hole_number: 2, player_a_strokes: 3, player_a_card: "double" },
+    };
+    const rows = [
+      { hole_number: 1, player_a_strokes: 999 }, // hoyo 1: no tocado por Realtime → sí se hidrata
+      { hole_number: 2, player_a_strokes: 3, player_a_card: null }, // hoyo 2: foto vieja, protegido
+    ];
+
+    const merged = mergeHydratedHoles(prev, rows, new Set([2]));
+
+    expect(merged[1]).toEqual({ hole_number: 1, player_a_strokes: 999 });
+    expect(merged[2]).toEqual(prev[2]);
+  });
+});
+
 describe("initMatchSync", () => {
   it("al arrancar, reintenta lo que hubiera pendiente de antes", async () => {
     fakeStorage.setItem(

@@ -7,6 +7,15 @@
 
 import { RefreshCcw, CircleSlash, Shield, Zap, Hand, CheckCircle2, Ban, Gift, Rewind } from "lucide-react";
 
+/**
+ * Color de acento por carta (D18, /design-consultation 25 ago 2026): verde
+ * si el efecto solo te beneficia a ti, coral si actúa directamente sobre el
+ * rival (cancela, roba o restringe) — dentro de la paleta BX ya cerrada en
+ * DESIGN.md, en vez de los tonos sky/amber/fuchsia/violet fuera de paleta
+ * que traía cada carta de Ofensiva/Defensa antes. El campo `type` sigue
+ * llevando la categoría (Reacción/Defensa/Ofensiva/Sabotaje) vía el chip de
+ * texto — el color ya no la codifica.
+ */
 export const CARDS = [
   {
     id: "second-shot",
@@ -35,8 +44,8 @@ export const CARDS = [
     desc: "Antes de empezar el hoyo. El rival no puede usar cartas contra ti durante todo ese hoyo.",
     type: "Defensa",
     icon: Shield,
-    accent: "bg-sky-50 text-sky-700 border-sky-200",
-    chip: "bg-sky-600",
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
   },
   {
     id: "double",
@@ -45,8 +54,8 @@ export const CARDS = [
     desc: "Antes de empezar el hoyo. Duplica tus puntos Stableford netos de ese hoyo.",
     type: "Ofensiva",
     icon: Zap,
-    accent: "bg-amber-50 text-amber-700 border-amber-200",
-    chip: "bg-amber-500",
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
   },
   {
     id: "steal",
@@ -55,8 +64,8 @@ export const CARDS = [
     desc: "Antes de empezar el hoyo. Si haces más puntos que el rival en el hoyo, le robas 1 punto.",
     type: "Ofensiva",
     icon: Hand,
-    accent: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
-    chip: "bg-fuchsia-600",
+    accent: "bg-[#FBEAE3] text-[#A8543F] border-[#D67560]/30",
+    chip: "bg-[#D67560]",
   },
   {
     id: "safe-hole",
@@ -95,8 +104,8 @@ export const CARDS = [
     desc: "Antes de empezar el hoyo. +2 si haces birdie. +3 si haces eagle o mejor.",
     type: "Ofensiva",
     icon: Gift,
-    accent: "bg-amber-50 text-amber-700 border-amber-200",
-    chip: "bg-amber-500",
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
   },
   {
     id: "comeback",
@@ -105,8 +114,8 @@ export const CARDS = [
     desc: "Antes de empezar el hoyo, solo si vas perdiendo en el total. Si ganas ese hoyo concreto al rival: +2 puntos.",
     type: "Ofensiva",
     icon: Rewind,
-    accent: "bg-violet-50 text-violet-700 border-violet-200",
-    chip: "bg-violet-600",
+    accent: "bg-[#E6F4ED] text-[#00703a] border-[#00703a]/30",
+    chip: "bg-[#00703a]",
   },
 ];
 

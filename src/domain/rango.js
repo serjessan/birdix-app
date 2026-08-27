@@ -70,3 +70,48 @@ export const calculateBirdixHcpAfterMatch = (profile, match) => {
   const adjustment = Math.max(-1.5, Math.min(1.5, -(margin / 8)));
   return normalizeBirdixHcp(current + adjustment);
 };
+
+/** Partidas reales que hacen falta antes de mover el hcp partida a partida — feedback tras la 1ª partida real, 25 ago 2026. */
+export const REAL_HCP_CALIBRATION_MATCHES = 5;
+
+/**
+ * Hándicap Birdix tras una partida REAL confirmada, con calibración inicial
+ * (D20, 25 ago 2026): las primeras `REAL_HCP_CALIBRATION_MATCHES` partidas
+ * no mueven el hcp — se acumula el margen (puntos reales menos esperados)
+ * en `pendingHcpMargin`, y al completar el umbral se aplica de golpe con el
+ * margen conjunto de esas partidas (mismo tope de siempre, ±1.5/partida,
+ * escalado al número de partidas que calibra a la vez). A partir de ahí
+ * sigue el ajuste incremental normal de `calculateBirdixHcpAfterMatch`.
+ *
+ * Necesita `realMatchesPlayed`/`pendingHcpMargin` en `profile` — columnas
+ * nuevas en `profiles`, a 0 por defecto para cuentas existentes, así que
+ * cualquier cuenta con partidas previas a esta consulta empieza a calibrar
+ * desde cero (no hay margen histórico que reconstruir).
+ */
+export const calculateBirdixHcpCalibration = (profile, match) => {
+  const current = getProfileBirdixHcp(profile);
+  const matchesBefore = Number.isFinite(Number(profile?.realMatchesPlayed)) ? Number(profile.realMatchesPlayed) : 0;
+  const priorMargin = Number.isFinite(Number(profile?.pendingHcpMargin)) ? Number(profile.pendingHcpMargin) : 0;
+
+  if (!match) {
+    return { hcp: current, realMatchesPlayed: matchesBefore, pendingHcpMargin: priorMargin, calibrating: matchesBefore < REAL_HCP_CALIBRATION_MATCHES };
+  }
+
+  const holes = match.holes || 9;
+  const expected = holes * 2;
+  const actual = Number.isFinite(Number(match.playerPoints)) ? Number(match.playerPoints) : expected;
+  const margin = actual - expected;
+  const matchesAfter = matchesBefore + 1;
+  const totalMargin = priorMargin + margin;
+
+  if (matchesAfter < REAL_HCP_CALIBRATION_MATCHES) {
+    return { hcp: current, realMatchesPlayed: matchesAfter, pendingHcpMargin: totalMargin, calibrating: true };
+  }
+  if (matchesAfter === REAL_HCP_CALIBRATION_MATCHES) {
+    const cap = 1.5 * REAL_HCP_CALIBRATION_MATCHES;
+    const adjustment = Math.max(-cap, Math.min(cap, -(totalMargin / 8)));
+    return { hcp: normalizeBirdixHcp(current + adjustment), realMatchesPlayed: matchesAfter, pendingHcpMargin: 0, calibrating: false };
+  }
+  const adjustment = Math.max(-1.5, Math.min(1.5, -(margin / 8)));
+  return { hcp: normalizeBirdixHcp(current + adjustment), realMatchesPlayed: matchesAfter, pendingHcpMargin: 0, calibrating: false };
+};

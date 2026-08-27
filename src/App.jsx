@@ -31,7 +31,6 @@ import {
   AlertCircle,
   CircleDot,
   Search,
-  Settings,
   Info,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -44,14 +43,25 @@ import {
   toRankingPoints,
   calculateEloDelta,
   calculateBirdixHcpAfterMatch,
+  REAL_HCP_CALIBRATION_MATCHES,
 } from "./domain/rango";
 import { CARDS, applyStablefordCardEffect, isCardPlayable, cardNeedsTarget } from "./domain/cards";
 import { hasStrokeInput, calculateStablefordPoints, getHandicapStrokesForHole, strokesForIndex } from "./domain/stableford";
 import { resolveHoleCards } from "./domain/holeResolution";
 import { deriveHoleView, bothPlayersDecided, computeBaseHoleScores, applyCardToBaseScore } from "./domain/matchHoleView";
-import { findRivalCandidates, createMatch as createMatchApi, confirmMatchResult, listMatchHoles, listMyActiveMatches, confirmDeck } from "./lib/api/matches";
+import {
+  findRivalCandidates,
+  createMatch as createMatchApi,
+  confirmMatchResult,
+  listMatchHoles,
+  listMyActiveMatches,
+  listMyMatchHistory,
+  confirmDeck,
+  markMatchOpened,
+  getMatchPlayersStatus,
+} from "./lib/api/matches";
 import { listCourses } from "./lib/api/courses";
-import { queueMatchHoleWrite } from "./lib/matchSync";
+import { queueMatchHoleWrite, mergeHydratedHoles } from "./lib/matchSync";
 import { useMatchRealtime } from "./hooks/useMatchRealtime";
 
 /* =========================================================================
@@ -345,6 +355,13 @@ const initialsFromName = (name = "?") =>
     .slice(0, 2)
     .toUpperCase() || "?";
 
+// Identificador corto por jugador (D19, feedback tras la 1ª partida real):
+// varios jugadores pueden compartir nombre — este código, derivado del UUID
+// de su cuenta, deja distinguirlos en la búsqueda de rival y en las
+// partidas. No es una columna nueva en la base de datos, solo una forma
+// legible de mostrar el id que cada jugador ya tiene.
+const shortPlayerCode = (id) => (id ? `#${String(id).replace(/-/g, "").slice(0, 4).toUpperCase()}` : null);
+
 const isTeamMatch = (match) =>
   match?.matchType === "2v2" || match?.format === "2 vs 2" || match?.format === "2v2";
 
@@ -516,12 +533,25 @@ function reducer(state, action) {
       return { ...state, profile: { ...action.payload, birdixHcp: getProfileBirdixHcp(action.payload) } };
     case "UPDATE_PROFILE":
       return { ...state, profile: { ...state.profile, ...action.payload } };
+    // D22 (25 ago 2026): refresco desde Supabase al arrancar — HYDRATE ya
+    // pintó rápido con lo que hubiera en localStorage; esto lo corrige con
+    // los datos reales en cuanto llegan, sin pisar campos locales que no
+    // vienen de Supabase (ver comentario junto al useEffect de hidratación).
+    case "REFRESH_FROM_SERVER": {
+      const { profile, ranking, matches } = action.payload || {};
+      return {
+        ...state,
+        profile: profile ? { ...state.profile, ...profile, birdixHcp: getProfileBirdixHcp(profile) } : state.profile,
+        ranking: Number.isFinite(Number(ranking)) ? toRankingPoints(ranking) : state.ranking,
+        matches: Array.isArray(matches) ? matches : state.matches,
+      };
+    }
     case "SET_SELECTED_CARDS":
       return { ...state, selectedCards: action.payload };
     case "SET_ACTIVE_MATCH":
       return { ...state, activeMatch: action.payload };
     case "FINISH_MATCH": {
-      const { match, rankingDelta } = action.payload || {};
+      const { match, rankingDelta, confirmedBirdixHcp } = action.payload || {};
       if (!match) return { ...state, selectedCards: [], activeMatch: null };
       const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
       const finishedMatch = normalizeFinishedMatch(match, safeDelta);
@@ -531,8 +561,19 @@ function reducer(state, action) {
       const nextMatches = [finishedMatch, ...safeMatches];
       const newRanking = toRankingPoints(safeRanking + safeDelta);
       const posDelta = -Math.round(safeDelta * 3.2);
+      // D20: en partida real, el hcp local nunca se adelanta al servidor —
+      // solo se toca si confirmMatchResult ya trajo el valor confirmado
+      // (ambos jugadores cerraron su lado). Sin eso, se deja tal cual hasta
+      // que se confirme más adelante. Las partidas locales/2vs2 (sin
+      // confirmación de por medio) siguen aplicando el cálculo optimista de
+      // siempre, sin cambios.
       const nextProfile = state.profile
-        ? { ...state.profile, birdixHcp: calculateBirdixHcpAfterMatch(state.profile, finishedMatch) }
+        ? {
+            ...state.profile,
+            birdixHcp: match.isRealMatch
+              ? (Number.isFinite(Number(confirmedBirdixHcp)) ? normalizeBirdixHcp(confirmedBirdixHcp) : getProfileBirdixHcp(state.profile))
+              : calculateBirdixHcpAfterMatch(state.profile, finishedMatch),
+          }
         : state.profile;
       return {
         ...state,
@@ -1144,7 +1185,7 @@ const OnboardingStepper = ({ user, onDone }) => {
    8 · SCREEN · HOME (Dashboard)
    --------------------------------------------------------------------------*/
 
-const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, onGoProfile, onFindRival }) => {
+const HomeScreen = ({ profile, ranking, matches, onCreate, onGoCards, onGoProfile }) => {
   const displayRanking = toRankingPoints(ranking);
   const division = getDivision(displayRanking);
   const nextDiv = getNextDivision(displayRanking);
@@ -1177,7 +1218,6 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
         <div className="relative p-6">
           <div className="flex items-center justify-between">
             <DivisionBadge points={displayRanking} />
-            <Pill tone="slate" icon={TrendingUp}>#{position.toLocaleString("es-ES")}</Pill>
           </div>
           <div className="mt-7 flex items-end justify-between gap-4">
             <div>
@@ -1215,10 +1255,6 @@ const HomeScreen = ({ profile, ranking, position, matches, onCreate, onGoCards, 
         >
           <span className="flex items-center gap-2 font-black text-[15px]"><Plus size={18} strokeWidth={2.5} />Crear partida</span>
           <ArrowRight size={18} strokeWidth={2.5} />
-        </button>
-        <button onClick={onFindRival} className="w-full rounded-[24px] bg-white px-5 py-4 text-slate-950 ring-1 ring-black/5 shadow-sm flex items-center justify-between active:scale-[0.985] transition-all duration-200">
-          <span className="flex items-center gap-2 font-black text-[15px]"><Search size={18} strokeWidth={2.5} />Buscar rival</span>
-          <span className="text-[11px] uppercase tracking-wider text-slate-400 font-black">online</span>
         </button>
       </div>
 
@@ -1284,7 +1320,10 @@ const MatchCard = ({ match, compact = false, onClick }) => {
       <div className="mt-3 flex items-end justify-between">
         <div>
           <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">vs</p>
-          <p className="font-bold text-slate-900 text-[15px] leading-tight">{match.rivalName}</p>
+          <p className="font-bold text-slate-900 text-[15px] leading-tight">
+            {match.rivalName}
+            {match.rivalId && <span className="text-slate-400 font-semibold"> {shortPlayerCode(match.rivalId)}</span>}
+          </p>
           <p className="text-[12px] text-slate-500 mt-0.5">{match.format} · {holeCount} hoyos · {match.course}</p>
         </div>
         <div className="text-right">
@@ -1342,12 +1381,9 @@ const MatchesScreen = ({
     format: profile?.format || "1v1",
     holes: profile?.holes || "9",
     course: "",
-    date: new Date().toISOString().slice(0, 10),
-    time: "10:00",
     teammateId: FAKE_RIVALS[1]?.id || "",
     rivalId: FAKE_RIVALS[0]?.id || "",
     rival2Id: FAKE_RIVALS[2]?.id || "",
-    mode: "competitive",
   });
   // 1vs1 real: buscar rival por nombre entre profiles reales, sustituye a
   // FAKE_RIVALS (T7). El 2vs2 de abajo sigue local-only con FAKE_RIVALS —
@@ -1443,8 +1479,7 @@ const MatchesScreen = ({
         holes: Number(draft.holes),
         courseId: course.id,
         course: course.name,
-        date: `${draft.date}T${draft.time}:00`,
-        mode: draft.mode,
+        date: new Date().toISOString(),
         playerHcp: normalizeHcp(profile?.hcp),
         playerBirdixHcp: getProfileBirdixHcp(profile),
         rivalId: rival?.id,
@@ -1460,7 +1495,7 @@ const MatchesScreen = ({
         },
         players,
         status: "pending",
-        cards: cardPicks,
+        selectedCards: cardPicks,
       });
       onSelectCards(cardPicks);
       setView("list");
@@ -1483,13 +1518,12 @@ const MatchesScreen = ({
         ...match,
         matchType: "1v1",
         format: "1 vs 1",
-        date: `${draft.date}T${draft.time}:00`,
-        mode: draft.mode,
+        date: new Date().toISOString(),
         playerHcp: normalizeHcp(profile?.hcp),
         playerBirdixHcp: getProfileBirdixHcp(profile),
         rivalHcp: match.rivalBirdixHcp,
         status: "pending",
-        cards: cardPicks,
+        selectedCards: cardPicks,
         isRealMatch: true,
         playerSide: "player_a",
       });
@@ -1561,7 +1595,9 @@ const MatchesScreen = ({
         >
           <Avatar initials={initialsFromName(selectedRival.full_name)} size="md" tone="emerald" />
           <div className="text-left flex-1">
-            <p className="font-black text-slate-950 text-[14px] leading-tight">{selectedRival.full_name}</p>
+            <p className="font-black text-slate-950 text-[14px] leading-tight">
+              {selectedRival.full_name} <span className="text-slate-400 font-bold">{shortPlayerCode(selectedRival.id)}</span>
+            </p>
             <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(selectedRival.birdix_hcp)}</p>
           </div>
           <span className="text-[11px] text-slate-400 font-bold">Cambiar</span>
@@ -1586,7 +1622,9 @@ const MatchesScreen = ({
               >
                 <Avatar initials={initialsFromName(r.full_name)} size="md" tone="slate" />
                 <div className="text-left flex-1">
-                  <p className="font-black text-slate-950 text-[14px] leading-tight">{r.full_name}</p>
+                  <p className="font-black text-slate-950 text-[14px] leading-tight">
+                    {r.full_name} <span className="text-slate-400 font-bold">{shortPlayerCode(r.id)}</span>
+                  </p>
                   <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(r.birdix_hcp)}</p>
                 </div>
                 <DivisionBadge points={r.points} compact />
@@ -1619,7 +1657,14 @@ const MatchesScreen = ({
                 </span>
               </div>
               <h3 className="font-black text-slate-900 text-lg mt-2">
-                {isTeamMatch(activeMatch) ? "Tu equipo vs Equipo rival" : `vs ${activeMatch.rivalName || "Rival"}`}
+                {isTeamMatch(activeMatch) ? (
+                  "Tu equipo vs Equipo rival"
+                ) : (
+                  <>
+                    vs {activeMatch.rivalName || "Rival"}
+                    {activeMatch.rivalId && <span className="text-slate-400 font-bold"> {shortPlayerCode(activeMatch.rivalId)}</span>}
+                  </>
+                )}
               </h3>
               <p className="text-[13px] text-slate-500">{activeMatch.format || "1 vs 1"} · {getMatchHoleCount(activeMatch)} hoyos · {activeMatch.course || "Campo sin definir"}</p>
               {isTeamMatch(activeMatch) ? (
@@ -1701,14 +1746,6 @@ const MatchesScreen = ({
               onChange={(v) => setDraft({ ...draft, holes: v })}
             />
           </div>
-          <div>
-            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Modo</span>
-            <SegmentedControl
-              options={[{ value: "competitive", label: "Competitiva" }, { value: "friendly", label: "Amistosa" }]}
-              value={draft.mode}
-              onChange={(v) => setDraft({ ...draft, mode: v })}
-            />
-          </div>
         </Card>
 
         <Card className="p-5 space-y-4 rounded-[30px] ring-black/5 shadow-sm">
@@ -1732,10 +1769,6 @@ const MatchesScreen = ({
             {!coursesError && courses.length > 0 && (
               <p className="text-[11px] text-slate-500 mt-2 font-semibold">{selectedCourse.location}</p>
             )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Fecha" type="date" value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} />
-            <Field label="Hora" type="time" value={draft.time} onChange={(v) => setDraft({ ...draft, time: v })} />
           </div>
         </Card>
 
@@ -2092,7 +2125,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
    13 · SCREEN · PROFILE
    --------------------------------------------------------------------------*/
 
-const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
+const ProfileScreen = ({ profile, userId, matches, ranking, onLogout }) => {
   const displayRanking = toRankingPoints(ranking);
   const nextDivision = getNextDivision(displayRanking);
   const wins = matches.filter((m) => m.result === "win").length;
@@ -2122,9 +2155,6 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-[26px] font-black tracking-tight text-slate-900">Perfil</h1>
-        <button className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
-          <Settings size={18} />
-        </button>
       </div>
 
       <Card className="p-5 shadow-surface">
@@ -2135,8 +2165,12 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
             </div>
           </div>
           <div className="flex-1">
-            <h2 className="font-black text-slate-900 text-xl leading-tight">{profile?.name}</h2>
+            <h2 className="font-black text-slate-900 text-xl leading-tight">
+              {profile?.name}
+              {userId && <span className="text-slate-400 font-bold text-[14px]"> {shortPlayerCode(userId)}</span>}
+            </h2>
             <p className="text-[13px] text-slate-500">{profile?.club}</p>
+            {userId && <p className="text-[11px] text-slate-400 font-semibold mt-0.5">Tu código de jugador — compártelo si hay más de un {profile?.name?.split(" ")[0] || "jugador"} en la búsqueda</p>}
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
               <span className="font-display text-[13px] px-2.5 py-1 rounded-full" style={{ background: `${division.hex}1a`, color: division.hex }}>{division.name}</span>
               <Pill tone="slate">Hándicap Birdix {formatBirdixHcp(getProfileBirdixHcp(profile))}</Pill>
@@ -2144,14 +2178,10 @@ const ProfileScreen = ({ profile, matches, ranking, position, onLogout }) => {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-2">
+        <div className="mt-5 grid grid-cols-2 gap-2">
           <div className="bg-slate-50 rounded-2xl p-3 text-center">
             <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Ranking</p>
             <p className="font-display text-[19px] text-slate-900 mt-0.5">{displayRanking}</p>
-          </div>
-          <div className="bg-slate-50 rounded-2xl p-3 text-center">
-            <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Posición</p>
-            <p className="font-display text-[19px] text-slate-900 mt-0.5">#{position.toLocaleString("es-ES")}</p>
           </div>
           <div className="bg-slate-50 rounded-2xl p-3 text-center">
             <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Racha</p>
@@ -3280,6 +3310,10 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
   const [secondShotPrompt, setSecondShotPrompt] = useState(false);
   const [secondShotInput, setSecondShotInput] = useState("");
   const resolvedSignatures = useRef({});
+  // Hoyos para los que ya ha llegado un UPDATE de Realtime desde que se
+  // montó esta pantalla — protege a la hidratación inicial (más abajo) de
+  // pisar un dato que ya sabemos más fresco con una foto REST más vieja.
+  const realtimeSeenRef = useRef(new Set());
 
   // Nota: sin el efecto de "clampear hole si total cambia" que tiene
   // MatchPlayScreen — aquí `total` sale de match.holes, fijo desde que se
@@ -3291,6 +3325,40 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     return () => clearTimeout(t);
   }, [revealCard]);
 
+  // Sala de espera del creador (D23, 25 ago 2026): quien crea la partida
+  // entra aquí directo (ya no vuelve a la lista) y espera a que el rival
+  // haya abierto la partida al menos una vez — señal de "se ha unido" más
+  // temprana que confirmar mazo, y la única que no exige tocar nada nuevo
+  // en Supabase salvo esta misma marca. Se marca mi propia apertura al
+  // montar (no-op si ya estaba marcada) y, solo si soy quien creó la
+  // partida, se sondea cada 3s hasta ver que el rival también la abrió.
+  const [rivalOpened, setRivalOpened] = useState(mySide !== "player_a");
+  useEffect(() => {
+    if (userId) markMatchOpened({ matchId: match.id, userId }).catch(() => {});
+  }, [match.id, userId]);
+  useEffect(() => {
+    if (mySide !== "player_a" || rivalOpened) return undefined;
+    let cancelled = false;
+    const check = () => {
+      getMatchPlayersStatus(match.id)
+        .then((rows) => {
+          if (cancelled) return;
+          const rival = rows.find((r) => r.side === rivalSide);
+          if (rival?.opened_at) setRivalOpened(true);
+        })
+        .catch(() => {
+          // Sin cobertura — se reintenta en el próximo tick, sin romper la
+          // espera ni mostrar un error por algo que se resuelve solo.
+        });
+    };
+    check();
+    const intervalId = setInterval(check, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [mySide, rivalOpened, match.id, rivalSide]);
+
   // Hidratación inicial: lo que ya existiera en match_holes antes de que
   // este dispositivo abriera la partida (holes que el rival ya empezó, o
   // una sesión anterior propia).
@@ -3299,11 +3367,7 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     listMatchHoles(match.id)
       .then((rows) => {
         if (cancelled) return;
-        const byHole = {};
-        rows.forEach((r) => {
-          byHole[r.hole_number] = r;
-        });
-        setRowsByHole(byHole);
+        setRowsByHole((prev) => mergeHydratedHoles(prev, rows, realtimeSeenRef.current));
         setLoadingHoles(false);
       })
       .catch(() => setLoadingHoles(false));
@@ -3318,9 +3382,23 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     onChange: (payload) => {
       const row = payload?.new;
       if (!row) return;
+      realtimeSeenRef.current.add(row.hole_number);
       setRowsByHole((prev) => ({ ...prev, [row.hole_number]: row }));
     },
   });
+
+  // Escritura optimista: funde el patch en el estado local YA, antes de que
+  // vuelva el eco de Realtime, y lo encola hacia Supabase (queueMatchHoleWrite
+  // ya fusiona/deduplica, ver matchSync.js). Sin esto, tus propias acciones
+  // (golpes, carta jugada) no se ven en tu propia pantalla hasta que el
+  // UPDATE vuelve confirmado — en cobertura de campo, varios segundos.
+  const writeHolePatch = (hn, patch) => {
+    setRowsByHole((prev) => ({
+      ...prev,
+      [hn]: { ...(prev[hn] || { hole_number: hn }), ...patch },
+    }));
+    queueMatchHoleWrite({ matchId: match.id, holeNumber: hn, patch });
+  };
 
   const holeNumber = hole + 1;
   const rawRow = rowsByHole[holeNumber] || { hole_number: holeNumber };
@@ -3403,7 +3481,7 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
       if ((v.my.cardConfirmed || v.my.holeSubmitted) && (v.rival.cardConfirmed || v.rival.holeSubmitted) && !row.cards_revealed) {
         patch.cards_revealed = true;
       }
-      queueMatchHoleWrite({ matchId: match.id, holeNumber: hn, patch });
+      writeHolePatch(hn, patch);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowsByHole, mySide, rivalSide, playerMatchHcp, rivalMatchHcp, match.id]);
@@ -3428,7 +3506,7 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
       }
       if (!hasStrokeInput(row[`${mySide}_strokes`])) return;
       submittedHolesRef.current[hn] = true;
-      queueMatchHoleWrite({ matchId: match.id, holeNumber: hn, patch: { [`${mySide}_hole_submitted`]: true } });
+      writeHolePatch(hn, { [`${mySide}_hole_submitted`]: true });
     });
   }, [rowsByHole, mySide, match.id]);
 
@@ -3474,6 +3552,36 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     );
   }
 
+  // Sala de espera (D23): solo el creador pasa por aquí, y solo hasta que
+  // el rival haya abierto la partida al menos una vez.
+  if (!rivalOpened) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#F3F4F6] via-[#FAF8F1] to-[#FAF8F1] flex flex-col">
+        <header className="px-5 pt-5 pb-3 max-w-[900px] mx-auto w-full">
+          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white shadow-surface flex items-center justify-center active:scale-95 transition">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="px-5 flex-1 max-w-[900px] mx-auto w-full flex flex-col items-center justify-center text-center pb-16">
+          <div className="h-16 w-16 rounded-2xl bg-white shadow-surface flex items-center justify-center mb-5">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#9CA3AF] animate-pulse" />
+          </div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida creada</p>
+          <h1 className="text-[24px] font-black tracking-tight text-slate-950 leading-tight mt-1.5">
+            Esperando a {rivalName.split(" ")[0]}
+          </h1>
+          <p className="text-[13px] text-slate-500 font-semibold mt-2 max-w-[280px]">
+            En cuanto {rivalName.split(" ")[0]} abra la partida en su móvil, pasáis directos a jugar.
+          </p>
+          <Card className="mt-6 p-4 rounded-[24px] ring-black/5 shadow-sm w-full max-w-[280px] text-left">
+            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-black">{matchCourse.name}</p>
+            <p className="text-[13px] text-slate-700 font-bold mt-1">{total} hoyos · vs {rivalName} {match?.rivalId && <span className="text-slate-400 font-semibold">{shortPlayerCode(match.rivalId)}</span>}</p>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   // Selección de mazo (D9): si todavía no he elegido mis cartas para esta
   // partida (p.ej. soy el rival, la partida ya la creó el otro jugador),
   // hace falta elegir antes de jugar. Visible al rival una vez elegido —
@@ -3500,7 +3608,9 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
             <ArrowLeft size={18} />
           </button>
           <div>
-            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">vs {rivalName}</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">
+              vs {rivalName} {match?.rivalId && <span className="opacity-60">{shortPlayerCode(match.rivalId)}</span>}
+            </p>
             <h1 className="text-[26px] font-black tracking-tight text-slate-950 leading-tight">Elige tus cartas</h1>
             <p className="text-[13px] text-slate-500 font-semibold mt-0.5">Tu rival verá qué cartas eliges — el secreto está en cuándo las juegas.</p>
           </div>
@@ -3548,7 +3658,7 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     );
   }
 
-  const finish = () => {
+  const finish = async () => {
     if (isFinishing) return;
     setIsFinishing(true);
     const result = calculateMatchWinner(playerTotal, rivalTotal);
@@ -3576,19 +3686,18 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
       isRealMatch: true,
       playerSide: mySide,
     };
-    onFinish(finalMatch, rankingDelta);
+    await onFinish(finalMatch, rankingDelta);
   };
 
-  const submitRivalStrokes = () => {
-    if (!hasStrokeInput(rivalStrokesInput)) return;
+  // Se guarda solo al introducir los golpes (queueMatchHoleWrite ya fusiona
+  // escrituras repetidas del mismo hoyo, ver matchSync.js) — "Siguiente
+  // hoyo" ya no hace de botón de guardado, solo avanza.
+  const setAndSaveRivalStrokes = (raw) => {
+    setRivalStrokesInput(raw);
+    if (!hasStrokeInput(raw)) return;
     const par = clampNumber(currentCourseHole.par, 3, 6, 4);
-    const clamped = clampNumber(rivalStrokesInput, 1, 12, par);
-    queueMatchHoleWrite({
-      matchId: match.id,
-      holeNumber,
-      patch: { [`${rivalSide}_strokes`]: clamped, [`${rivalSide}_strokes_marker`]: userId },
-    });
-    setRivalStrokesInput("");
+    const clamped = clampNumber(raw, 1, 12, par);
+    writeHolePatch(holeNumber, { [`${rivalSide}_strokes`]: clamped, [`${rivalSide}_strokes_marker`]: userId });
   };
 
   // Navegar de hoyo limpia los buffers locales de golpes — si no, un valor
@@ -3601,25 +3710,16 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     setSelfStrokesOpen(false);
   };
 
-  const submitSelfStrokes = () => {
-    if (!hasStrokeInput(selfStrokesInput)) return;
+  const setAndSaveSelfStrokes = (raw) => {
+    setSelfStrokesInput(raw);
+    if (!hasStrokeInput(raw)) return;
     const par = clampNumber(currentCourseHole.par, 3, 6, 4);
-    const clamped = clampNumber(selfStrokesInput, 1, 12, par);
-    queueMatchHoleWrite({
-      matchId: match.id,
-      holeNumber,
-      patch: { [`${mySide}_strokes`]: clamped, [`${mySide}_strokes_marker`]: userId },
-    });
-    setSelfStrokesInput("");
-    setSelfStrokesOpen(false);
+    const clamped = clampNumber(raw, 1, 12, par);
+    writeHolePatch(holeNumber, { [`${mySide}_strokes`]: clamped, [`${mySide}_strokes_marker`]: userId });
   };
 
   const playCard = (cardId) => {
-    queueMatchHoleWrite({
-      matchId: match.id,
-      holeNumber,
-      patch: { [`${mySide}_card`]: cardId, [`${mySide}_card_confirmed`]: true, [`${mySide}_hole_submitted`]: true },
-    });
+    writeHolePatch(holeNumber, { [`${mySide}_card`]: cardId, [`${mySide}_card_confirmed`]: true, [`${mySide}_hole_submitted`]: true });
     setShowCardPicker(false);
     const c = CARDS.find((x) => x.id === cardId);
     if (c) setRevealCard(c);
@@ -3629,15 +3729,11 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     if (!hasStrokeInput(secondShotInput)) return;
     const par = clampNumber(currentCourseHole.par, 3, 6, 4);
     const clamped = clampNumber(secondShotInput, 1, 12, par);
-    queueMatchHoleWrite({
-      matchId: match.id,
-      holeNumber,
-      patch: {
-        [`${mySide}_strokes`]: clamped,
-        [`${mySide}_card`]: "second-shot",
-        [`${mySide}_card_confirmed`]: true,
-        [`${mySide}_hole_submitted`]: true,
-      },
+    writeHolePatch(holeNumber, {
+      [`${mySide}_strokes`]: clamped,
+      [`${mySide}_card`]: "second-shot",
+      [`${mySide}_card_confirmed`]: true,
+      [`${mySide}_hole_submitted`]: true,
     });
     setSecondShotInput("");
     setSecondShotPrompt(false);
@@ -3661,7 +3757,9 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
           </button>
           <div className="text-center">
             <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida en curso</p>
-            <p className="font-black text-slate-950 text-[16px] leading-tight mt-0.5">vs {rivalName}</p>
+            <p className="font-black text-slate-950 text-[16px] leading-tight mt-0.5">
+              vs {rivalName} {match?.rivalId && <span className="text-slate-400 font-bold">{shortPlayerCode(match.rivalId)}</span>}
+            </p>
           </div>
           {/* Indicador de reconexión (DESIGN.md "Estado de conexión") — hueco
               de simetría ya reservado, sin texto ambiental. */}
@@ -3725,22 +3823,16 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
           <ScoreInput
             label={`Golpes de ${rivalName.split(" ")[0]}`}
             value={hasStrokeInput(rivalStrokesInput) ? rivalStrokesInput : (view.rival.strokes ?? "")}
-            onChange={setRivalStrokesInput}
+            onChange={setAndSaveRivalStrokes}
             tone="primary"
           />
-          {hasStrokeInput(rivalStrokesInput) && rivalStrokesInput !== (view.rival.strokes ?? "") && (
-            <SecondaryButton onClick={submitRivalStrokes}>Guardar golpes de {rivalName.split(" ")[0]}</SecondaryButton>
-          )}
 
           {hasStrokeInput(view.my.strokes) ? (
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5 flex items-center justify-between">
               <p className="text-[12px] text-slate-600 font-semibold">Tus golpes: <span className="font-black text-slate-900">{view.my.strokes}</span></p>
             </div>
           ) : selfStrokesOpen ? (
-            <>
-              <ScoreInput label="Tus golpes (apuntados por ti)" value={selfStrokesInput} onChange={setSelfStrokesInput} />
-              <SecondaryButton onClick={submitSelfStrokes}>Guardar</SecondaryButton>
-            </>
+            <ScoreInput label="Tus golpes (apuntados por ti)" value={selfStrokesInput} onChange={setAndSaveSelfStrokes} />
           ) : (
             <button onClick={() => setSelfStrokesOpen(true)} className="text-[12px] text-slate-400 font-bold underline underline-offset-2 text-left">
               {rivalName.split(" ")[0]} no ha apuntado tus golpes todavía — apuntarlos yo
@@ -3991,6 +4083,47 @@ const MatchResultScreen = ({ match, rankingBefore, rankingAfter, onDone }) => {
         <p className="mt-4 text-[13px] text-slate-500 font-semibold">
           Stableford neto <span className="text-slate-900 font-black">{match?.playerPoints ?? 0} – {match?.rivalPoints ?? 0}</span>
         </p>
+
+        {/* Hándicap Birdix (D20, 25 ago 2026) — solo en partidas reales. Nunca
+            un número optimista: hasta que confirmMatchResult diga que los 2
+            jugadores han cerrado su lado, no hay número que enseñar. */}
+        {match?.isRealMatch && (
+          <div className="mt-5 w-full max-w-[280px] rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm px-4 py-3.5">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-black">Hándicap Birdix</p>
+            {!match.hcpConfirmation?.applied ? (
+              <p className="text-[13px] text-slate-500 font-semibold mt-1.5">
+                Esperando a que {(match.rivalName || "tu rival").split(" ")[0]} confirme el resultado.
+              </p>
+            ) : match.hcpConfirmation.hcpCalibrating ? (
+              <>
+                <p className="text-[13px] text-slate-700 font-bold mt-1.5">
+                  Calibrando — partida {match.hcpConfirmation.realMatchesPlayed}/{REAL_HCP_CALIBRATION_MATCHES}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Se ajusta de golpe al completar {REAL_HCP_CALIBRATION_MATCHES} partidas reales.
+                </p>
+              </>
+            ) : (
+              <div className="flex items-center justify-center gap-2 mt-1.5">
+                <span className="font-display text-[20px] text-slate-900">{formatBirdixHcp(match.playerBirdixHcp)}</span>
+                <ArrowRight size={14} className="text-slate-400" />
+                <span
+                  className="font-display text-[20px]"
+                  style={{
+                    color:
+                      match.hcpConfirmation.newBirdixHcp < match.playerBirdixHcp
+                        ? "#00703a"
+                        : match.hcpConfirmation.newBirdixHcp > match.playerBirdixHcp
+                          ? "#A8543F"
+                          : "#111827",
+                  }}
+                >
+                  {formatBirdixHcp(match.hcpConfirmation.newBirdixHcp)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 px-5 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
@@ -4062,6 +4195,33 @@ export default function BirdixApp() {
           type: "HYDRATE",
           payload: { session, user, profile, matches, ranking, position, selectedCards, activeMatch },
         });
+
+        // D22: HYDRATE de arriba ya pintó rápido con lo último que hubiera
+        // en localStorage de ESTE dispositivo — eso es lo único que hacía
+        // hasta hoy, y es la causa de que un segundo móvil (o el mismo tras
+        // perder caché) mostrara perfil/historial desactualizados aunque
+        // Supabase sí tuviera lo real. Esto lo corrige en cuanto llega, sin
+        // bloquear el primer pintado.
+        if (authSession) {
+          Promise.all([
+            supabase.from("profiles").select("*").eq("id", authSession.user.id).single(),
+            listMyMatchHistory(authSession.user.id),
+          ])
+            .then(([{ data: row }, history]) => {
+              dispatch({
+                type: "REFRESH_FROM_SERVER",
+                payload: {
+                  profile: row ? { name: row.full_name, hcp: row.birdix_hcp, birdixHcp: row.birdix_hcp } : null,
+                  ranking: row?.points,
+                  matches: history,
+                },
+              });
+            })
+            .catch(() => {
+              // Sin cobertura al arrancar — se queda con la caché local; en
+              // cuanto haya red, el próximo arranque se refresca solo.
+            });
+        }
 
         const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
           if (!newSession) dispatch({ type: "LOGOUT" });
@@ -4196,43 +4356,57 @@ export default function BirdixApp() {
     setTab("home");
   };
 
+  // D23 (25 ago 2026): entrar directo a la partida en vez de volver a la
+  // lista — antes, tras crear, el jugador aterrizaba en Partidas y tenía
+  // que volver a tocar la tarjeta de "Partida activa" para entrar, lo que
+  // se sentía como "entro y salgo" de la pantalla de creación.
   const handleCreateMatch = (match) => {
     dispatch({ type: "SET_ACTIVE_MATCH", payload: match });
-    setToast("Partida preparada");
+    setPlaying(true);
   };
 
-  const handleFinishMatch = (match, rankingDelta) => {
+  // D20 (25 ago 2026): el hcp real de una partida real nunca se enseña
+  // optimista — se espera a confirmMatchResult (mi confirmación + la del
+  // rival, si ya llegó) antes de decidir qué pinta MatchResultScreen. La
+  // llamada en sí es rápida (un roundtrip, "¿cuántas confirmaciones hay
+  // ahora?"), no una espera indefinida a que el rival actúe en el futuro —
+  // si el rival aún no ha confirmado, esto vuelve con applied:false al
+  // momento y la pantalla lo refleja como "esperando".
+  const handleFinishMatch = async (match, rankingDelta) => {
     const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
     const finishedMatch = normalizeFinishedMatch(match, safeDelta);
     const rankingBefore = toRankingPoints(state.ranking);
     finishingRef.current = true;
-    dispatch({ type: "FINISH_MATCH", payload: { match: finishedMatch, rankingDelta: safeDelta } });
+
+    let hcpConfirmation = null;
+    if (match?.isRealMatch && state.user?.id) {
+      try {
+        hcpConfirmation = await confirmMatchResult({
+          matchId: finishedMatch.id,
+          userId: state.user.id,
+          playerSide: match.playerSide || "player_a",
+          holes: finishedMatch.holes,
+          result: finishedMatch.result,
+          playerPoints: finishedMatch.playerPoints,
+          rivalPoints: finishedMatch.rivalPoints,
+        });
+      } catch (err) {
+        setToast(err?.message || "No se pudo confirmar el resultado. Se reintentará más adelante.");
+      }
+    }
+    finishedMatch.hcpConfirmation = hcpConfirmation;
+
+    dispatch({
+      type: "FINISH_MATCH",
+      payload: {
+        match: finishedMatch,
+        rankingDelta: safeDelta,
+        confirmedBirdixHcp: hcpConfirmation?.applied ? hcpConfirmation.newBirdixHcp : undefined,
+      },
+    });
     setPlaying(false);
     setResultMatch({ match: finishedMatch, rankingBefore, rankingAfter: toRankingPoints(rankingBefore + safeDelta) });
-
-    // T8: confirmar mi lado del resultado real. Solo se aplica de verdad
-    // (rango/hcp/streak actualizados) cuando el rival TAMBIÉN haya
-    // confirmado el suyo — hoy, con MatchPlayScreen todavía de un solo
-    // dispositivo (D7 sin construir), eso no pasa aún de forma independiente,
-    // así que esto se queda "esperando al rival" hasta que D7 conecte una
-    // sesión real del otro jugador. No bloquea nada de lo que ve este
-    // jugador — se lanza en segundo plano, sin await.
-    if (match?.isRealMatch && state.user?.id) {
-      confirmMatchResult({
-        matchId: finishedMatch.id,
-        userId: state.user.id,
-        playerSide: match.playerSide || "player_a",
-        holes: finishedMatch.holes,
-        result: finishedMatch.result,
-        playerPoints: finishedMatch.playerPoints,
-        rivalPoints: finishedMatch.rivalPoints,
-      }).catch((err) => {
-        setToast(err?.message || "No se pudo confirmar el resultado. Se reintentará más adelante.");
-      });
-    }
   };
-
-  const handleFindRival = () => setToast("Buscando rival…");
 
   /* --- Renderizado de pantallas --- */
 
@@ -4353,12 +4527,10 @@ export default function BirdixApp() {
           <HomeScreen
             profile={state.profile}
             ranking={state.ranking}
-            position={state.position}
             matches={state.matches}
             onCreate={() => setTab("matches")}
             onGoCards={() => setTab("cards")}
             onGoProfile={() => setTab("profile")}
-            onFindRival={handleFindRival}
           />
         )}
         {tab === "matches" && (
@@ -4384,9 +4556,9 @@ export default function BirdixApp() {
         {tab === "profile" && (
           <ProfileScreen
             profile={state.profile}
+            userId={state.user?.id}
             matches={state.matches}
             ranking={state.ranking}
-            position={state.position}
             onLogout={handleLogout}
           />
         )}

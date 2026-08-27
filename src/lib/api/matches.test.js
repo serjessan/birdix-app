@@ -76,6 +76,63 @@ describe("listMatchHoles", () => {
   });
 });
 
+describe("markMatchOpened", () => {
+  it("marca opened_at solo si todavía no estaba (D23)", async () => {
+    const is = vi.fn().mockResolvedValue({ error: null });
+    const eq2 = vi.fn(() => ({ is }));
+    const eq1 = vi.fn(() => ({ eq: eq2 }));
+    const update = vi.fn(() => ({ eq: eq1 }));
+    fromMock.mockReturnValue({ update });
+
+    const { markMatchOpened } = await import("./matches");
+    await markMatchOpened({ matchId: "match-1", userId: "me" });
+
+    expect(fromMock).toHaveBeenCalledWith("match_players");
+    expect(update.mock.calls[0][0]).toMatchObject({});
+    expect(update.mock.calls[0][0].opened_at).toBeTruthy();
+    expect(eq1).toHaveBeenCalledWith("match_id", "match-1");
+    expect(eq2).toHaveBeenCalledWith("user_id", "me");
+    expect(is).toHaveBeenCalledWith("opened_at", null);
+  });
+
+  it("throws on a Supabase error", async () => {
+    const is = vi.fn().mockResolvedValue({ error: new Error("network") });
+    fromMock.mockReturnValue({ update: () => ({ eq: () => ({ eq: () => ({ is }) }) }) });
+
+    const { markMatchOpened } = await import("./matches");
+    await expect(markMatchOpened({ matchId: "match-1", userId: "me" })).rejects.toThrow("network");
+  });
+});
+
+describe("getMatchPlayersStatus", () => {
+  it("returns both sides' join status", async () => {
+    const eq = vi.fn().mockResolvedValue({
+      data: [
+        { side: "player_a", user_id: "me", opened_at: "2026-08-25T10:00:00Z", deck_confirmed_at: "2026-08-25T10:00:00Z" },
+        { side: "player_b", user_id: "rival-1", opened_at: null, deck_confirmed_at: null },
+      ],
+      error: null,
+    });
+    const select = vi.fn(() => ({ eq }));
+    fromMock.mockReturnValue({ select });
+
+    const { getMatchPlayersStatus } = await import("./matches");
+    const result = await getMatchPlayersStatus("match-1");
+
+    expect(fromMock).toHaveBeenCalledWith("match_players");
+    expect(eq).toHaveBeenCalledWith("match_id", "match-1");
+    expect(result[1]).toEqual({ side: "player_b", user_id: "rival-1", opened_at: null, deck_confirmed_at: null });
+  });
+
+  it("throws on a Supabase error", async () => {
+    const eq = vi.fn().mockResolvedValue({ data: null, error: new Error("network") });
+    fromMock.mockReturnValue({ select: () => ({ eq }) });
+
+    const { getMatchPlayersStatus } = await import("./matches");
+    await expect(getMatchPlayersStatus("match-1")).rejects.toThrow("network");
+  });
+});
+
 describe("listMyActiveMatches", () => {
   const mockActiveMatchesQuery = (rows) => {
     const order = vi.fn().mockResolvedValue({ data: rows, error: null });
@@ -178,6 +235,121 @@ describe("listMyActiveMatches", () => {
 
     const { listMyActiveMatches } = await import("./matches");
     await expect(listMyActiveMatches("me")).rejects.toThrow("network");
+  });
+});
+
+describe("listMyMatchHistory", () => {
+  const mockHistoryQuery = (rows) => {
+    const order = vi.fn().mockResolvedValue({ data: rows, error: null });
+    const eq = vi.fn(() => ({ order }));
+    const select = vi.fn(() => ({ eq }));
+    return { select, eq, order };
+  };
+
+  it("D22: recalcula los puntos sumando match_holes (total_stableford nunca se escribe) y determina el resultado por winner_id", async () => {
+    const { select } = mockHistoryQuery([
+      {
+        id: "match-1",
+        course_id: "c1",
+        status: "confirmed",
+        format: "stableford_1v1",
+        started_at: "2026-08-20T10:00:00Z",
+        finished_at: "2026-08-20T13:00:00Z",
+        winner_id: "me",
+        courses: { name: "La Valmuza", location: "Salamanca" },
+        match_players: [
+          { side: "player_a", user_id: "me", points_before: 1000, points_after: 1016, birdix_hcp_at_match: 18, profiles: { full_name: "Me" } },
+          { side: "player_b", user_id: "rival-1", points_before: 1000, points_after: 984, birdix_hcp_at_match: 12.5, profiles: { full_name: "Carlos" } },
+        ],
+        match_holes: [
+          { hole_number: 1, player_a_card: "double", player_b_card: null, player_a_stableford: 4, player_b_stableford: 2 },
+          { hole_number: 2, player_a_card: null, player_b_card: "block", player_a_stableford: 2, player_b_stableford: 3 },
+        ],
+      },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyMatchHistory } = await import("./matches");
+    const result = await listMyMatchHistory("me");
+
+    expect(fromMock).toHaveBeenCalledWith("matches");
+    expect(result).toEqual([
+      {
+        id: "match-1",
+        matchType: "1v1",
+        format: "1 vs 1",
+        holes: 2,
+        courseId: "c1",
+        course: "La Valmuza",
+        date: "2026-08-20T13:00:00Z",
+        status: "finished",
+        result: "win",
+        playerSide: "player_a",
+        playerHcp: 18,
+        playerBirdixHcp: 18,
+        playerPoints: 6, // 4 + 2
+        rivalId: "rival-1",
+        rivalName: "Carlos",
+        rivalHcp: 12.5,
+        rivalBirdixHcp: 12.5,
+        rivalPoints: 5, // 2 + 3
+        rankingDelta: 16, // 1016 - 1000
+        cardsUsed: ["double"],
+        finishedAt: "2026-08-20T13:00:00Z",
+        isRealMatch: true,
+      },
+    ]);
+  });
+
+  it("resultado 'loss'/'draw' según winner_id, visto desde el lado player_b", async () => {
+    const { select } = mockHistoryQuery([
+      {
+        id: "match-1",
+        match_players: [
+          { side: "player_a", user_id: "rival-1", points_before: 1000, points_after: 1010, birdix_hcp_at_match: 18, profiles: { full_name: "Carlos" } },
+          { side: "player_b", user_id: "me", points_before: 1000, points_after: 990, birdix_hcp_at_match: 18, profiles: { full_name: "Me" } },
+        ],
+        match_holes: [],
+        winner_id: "rival-1",
+        courses: {},
+      },
+      {
+        id: "match-2",
+        match_players: [
+          { side: "player_a", user_id: "rival-1", points_before: 1000, points_after: 1000, birdix_hcp_at_match: 18, profiles: { full_name: "Carlos" } },
+          { side: "player_b", user_id: "me", points_before: 1000, points_after: 1000, birdix_hcp_at_match: 18, profiles: { full_name: "Me" } },
+        ],
+        match_holes: [],
+        winner_id: null,
+        courses: {},
+      },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyMatchHistory } = await import("./matches");
+    const result = await listMyMatchHistory("me");
+
+    expect(result[0].result).toBe("loss");
+    expect(result[0].playerSide).toBe("player_b");
+    expect(result[1].result).toBe("draw");
+  });
+
+  it("drops a row where I'm not actually a participant instead of throwing", async () => {
+    const { select } = mockHistoryQuery([
+      { id: "match-1", match_players: [{ side: "player_a", user_id: "x", profiles: {} }, { side: "player_b", user_id: "y", profiles: {} }], match_holes: [], courses: {} },
+    ]);
+    fromMock.mockReturnValue({ select });
+
+    const { listMyMatchHistory } = await import("./matches");
+    expect(await listMyMatchHistory("me")).toEqual([]);
+  });
+
+  it("throws on a Supabase error", async () => {
+    const order = vi.fn().mockResolvedValue({ data: null, error: new Error("network") });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ order }) }) });
+
+    const { listMyMatchHistory } = await import("./matches");
+    await expect(listMyMatchHistory("me")).rejects.toThrow("network");
   });
 });
 
@@ -383,6 +555,51 @@ describe("confirmMatchResult", () => {
     const applyCall = rpcMock.mock.calls.find(([name]) => name === "apply_match_result");
     expect(applyCall[1].p_new_points_b).toBe(1016); // "me" is player_b here
     expect(applyCall[1].p_new_points_a).toBe(984);
+  });
+
+  it("D20: en calibración (< 5 partidas reales), el hcp no se mueve pero real_matches_played/pending_hcp_margin sí se envían a la RPC", async () => {
+    const insert = mockConfirmationsInsert();
+    const { select: confirmSelect } = mockConfirmationsCount(2);
+    const { select: profilesSelect } = mockProfilesLookup([
+      { id: "me", points: 1000, birdix_hcp: 18, wins: 0, losses: 0, win_streak: 0, loss_streak: 0, real_matches_played: 1, pending_hcp_margin: 2 },
+      { id: "rival-1", points: 1000, birdix_hcp: 18, wins: 0, losses: 0, win_streak: 0, loss_streak: 0, real_matches_played: 0, pending_hcp_margin: 0 },
+    ]);
+    mockFromByTable({
+      match_confirmations: { insert, select: confirmSelect },
+      profiles: { select: profilesSelect },
+    });
+
+    rpcMock.mockImplementation((name) => {
+      if (name === "get_match_context") {
+        return Promise.resolve({
+          data: [
+            { side: "player_a", user_id: "me", points_before: 1000, birdix_hcp_at_match: 18 },
+            { side: "player_b", user_id: "rival-1", points_before: 1000, birdix_hcp_at_match: 18 },
+          ],
+          error: null,
+        });
+      }
+      if (name === "apply_match_result") return Promise.resolve({ error: null });
+      throw new Error("unexpected rpc " + name);
+    });
+
+    const { confirmMatchResult } = await import("./matches");
+    // 9 hoyos, 20 puntos → esperado 18, margen +2. Con el margen previo (2)
+    // acumulado, sigue por debajo de las 5 partidas de calibración (llega a 2).
+    const result = await confirmMatchResult(baseArgs);
+
+    expect(result.applied).toBe(true);
+    expect(result.hcpCalibrating).toBe(true);
+    expect(result.realMatchesPlayed).toBe(2);
+    expect(result.newBirdixHcp).toBe(18); // sin cambio todavía, en calibración
+
+    const applyCall = rpcMock.mock.calls.find(([name]) => name === "apply_match_result");
+    expect(applyCall[1]).toMatchObject({
+      p_new_hcp_a: 18,
+      p_new_real_matches_played_a: 2,
+      p_new_pending_hcp_margin_a: 4, // margen previo 2 + margen de esta partida 2
+      p_new_real_matches_played_b: 1,
+    });
   });
 
   it("throws if apply_match_result RPC errors (e.g. not zero-sum, or DB rejects)", async () => {

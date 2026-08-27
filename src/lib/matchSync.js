@@ -119,6 +119,28 @@ export const flushOutbox = () => Promise.all(Object.keys(readOutbox()).map(flush
 export const getPendingSyncCount = () => Object.keys(readOutbox()).length;
 
 /**
+ * Funde una foto de match_holes recién hidratada por REST (`listMatchHoles`,
+ * al montar la pantalla de partida) sobre el estado local ya en pantalla,
+ * sin dejar que pise ningún hoyo para el que ya haya llegado un UPDATE de
+ * Realtime — ese ya es, por causalidad, al menos tan fresco como la foto
+ * REST. Sin esto, en cobertura de campo la hidratación puede tardar más que
+ * el push de Realtime y pisar un dato del rival que ya habías visto llegar
+ * con uno más viejo (T-investigate 25 ago 2026: causa raíz del "lío al
+ * refrescar entre hoyo y hoyo").
+ *
+ * `realtimeSeenHoles` es un Set de `hole_number` — cualquier estructura con
+ * `.has()` sirve (pensado para un `useRef(new Set())` en el componente).
+ */
+export const mergeHydratedHoles = (prevByHole, rows, realtimeSeenHoles) => {
+  const merged = { ...prevByHole };
+  rows.forEach((row) => {
+    if (realtimeSeenHoles.has(row.hole_number)) return;
+    merged[row.hole_number] = row;
+  });
+  return merged;
+};
+
+/**
  * Arranca el ciclo de reintento en segundo plano: reintenta lo que haya
  * quedado pendiente de una sesión anterior (partida cerrada con la app y
  * reabierta — Decision 3), escucha el evento 'online' del navegador, y

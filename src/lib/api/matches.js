@@ -12,7 +12,7 @@
 import { supabase } from "../supabase";
 import {
   calculateEloDelta,
-  calculateBirdixHcpAfterMatch,
+  calculateBirdixHcpCalibration,
   calculateStreakAfterMatch,
   toRankingPoints,
 } from "../../domain/rango";
@@ -85,6 +85,33 @@ export const listMatchHoles = async (matchId) => {
 };
 
 /**
+ * Marca que he abierto esta partida por primera vez en este dispositivo —
+ * señal de "me he unido" para la sala de espera del creador (D23, 25 ago
+ * 2026). El `.is("opened_at", null)` evita pisar el instante real la
+ * segunda vez que abro la partida (no falla si no hay fila que actualizar,
+ * simplemente no hace nada).
+ */
+export const markMatchOpened = async ({ matchId, userId }) => {
+  const { error } = await supabase
+    .from("match_players")
+    .update({ opened_at: new Date().toISOString() })
+    .eq("match_id", matchId)
+    .eq("user_id", userId)
+    .is("opened_at", null);
+  if (error) throw error;
+};
+
+/** Estado de unión de los 2 lados de una partida — para que la sala de espera del creador sepa cuándo dejar de esperar. */
+export const getMatchPlayersStatus = async (matchId) => {
+  const { data, error } = await supabase
+    .from("match_players")
+    .select("side, user_id, opened_at, deck_confirmed_at")
+    .eq("match_id", matchId);
+  if (error) throw error;
+  return data;
+};
+
+/**
  * Partidas activas donde soy jugador — sin esto, el rival (quien no creó la
  * partida) no tiene forma de descubrirla nunca (D7, gap señalado en el eng
  * review y no resuelto hasta ahora). RLS de `matches` ya filtra a las
@@ -133,6 +160,75 @@ export const listMyActiveMatches = async (userId) => {
 };
 
 /**
+ * Historial de partidas reales YA confirmadas (D22, 25 ago 2026) — hasta
+ * ahora `state.matches` solo se rellenaba con lo que este mismo dispositivo
+ * acababa de terminar (dispatch local en App.jsx), así que un segundo
+ * dispositivo — o el mismo tras vaciar/perder localStorage — nunca veía el
+ * historial ni el perfil realmente al día, aunque las partidas sí quedaran
+ * bien guardadas en Supabase. Se llama al arrancar la app (ver HYDRATE en
+ * App.jsx), igual que `listMyActiveMatches` cubre las pendientes.
+ *
+ * `total_stableford` en match_players nunca se ha escrito desde el cliente
+ * (queda a 0), así que los puntos reales de cada lado se recalculan aquí
+ * sumando `match_holes.player_a/b_stableford` — la misma fuente de verdad
+ * que ya usa `holeSummaries` en vivo dentro de la partida.
+ */
+export const listMyMatchHistory = async (userId) => {
+  const { data, error } = await supabase
+    .from("matches")
+    .select(`
+      id, course_id, status, format, started_at, finished_at, winner_id,
+      courses ( name, location ),
+      match_players ( side, user_id, points_before, points_after, birdix_hcp_at_match, profiles ( full_name ) ),
+      match_holes ( hole_number, player_a_card, player_b_card, player_a_stableford, player_b_stableford )
+    `)
+    .eq("status", "confirmed")
+    .order("finished_at", { ascending: false });
+  if (error) throw error;
+
+  return data
+    .map((row) => {
+      const me = row.match_players.find((p) => p.user_id === userId);
+      const rival = row.match_players.find((p) => p.user_id !== userId);
+      if (!me || !rival) return null; // no debería pasar bajo RLS, pero no reventar si pasa
+
+      const holes = row.match_holes || [];
+      const mySide = me.side;
+      const rivalSide = mySide === "player_a" ? "player_b" : "player_a";
+      const playerPoints = holes.reduce((sum, h) => sum + (h[`${mySide}_stableford`] || 0), 0);
+      const rivalPoints = holes.reduce((sum, h) => sum + (h[`${rivalSide}_stableford`] || 0), 0);
+      const cardsUsed = holes.map((h) => h[`${mySide}_card`]).filter(Boolean);
+      const result = !row.winner_id ? "draw" : row.winner_id === userId ? "win" : "loss";
+
+      return {
+        id: row.id,
+        matchType: "1v1",
+        format: row.format === "stableford_1v1" ? "1 vs 1" : row.format,
+        holes: holes.length,
+        courseId: row.course_id,
+        course: row.courses?.name || "Campo sin definir",
+        date: row.finished_at || row.started_at,
+        status: "finished",
+        result,
+        playerSide: mySide,
+        playerHcp: me.birdix_hcp_at_match,
+        playerBirdixHcp: me.birdix_hcp_at_match,
+        playerPoints,
+        rivalId: rival.user_id,
+        rivalName: rival.profiles?.full_name || "Rival",
+        rivalHcp: rival.birdix_hcp_at_match,
+        rivalBirdixHcp: rival.birdix_hcp_at_match,
+        rivalPoints,
+        rankingDelta: (Number(me.points_after) || 0) - (Number(me.points_before) || 0),
+        cardsUsed,
+        finishedAt: row.finished_at,
+        isRealMatch: true,
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
  * Confirma el resultado de esta partida desde tu lado. Cuando ambos
  * jugadores han confirmado, calcula (con rango.js, no en SQL) el nuevo
  * rango/hcp/streak de los 2 y lo aplica vía apply_match_result — gateado
@@ -172,7 +268,7 @@ export const confirmMatchResult = async ({
 
   const { data: liveProfiles, error: profilesError } = await supabase
     .from("profiles")
-    .select("id, points, birdix_hcp, wins, losses, win_streak, loss_streak")
+    .select("id, points, birdix_hcp, wins, losses, win_streak, loss_streak, real_matches_played, pending_hcp_margin")
     .in("id", [userId, rivalCtx.user_id]);
   if (profilesError) throw profilesError;
   const myLive = liveProfiles.find((p) => p.id === userId);
@@ -180,14 +276,30 @@ export const confirmMatchResult = async ({
   if (!myLive || !rivalLive) return { applied: false };
 
   const rivalResult = result === "win" ? "loss" : result === "loss" ? "win" : "draw";
-  const myProfileForCalc = { birdixHcp: myLive.birdix_hcp, wins: myLive.wins, losses: myLive.losses, winStreak: myLive.win_streak, lossStreak: myLive.loss_streak };
-  const rivalProfileForCalc = { birdixHcp: rivalLive.birdix_hcp, wins: rivalLive.wins, losses: rivalLive.losses, winStreak: rivalLive.win_streak, lossStreak: rivalLive.loss_streak };
+  const myProfileForCalc = {
+    birdixHcp: myLive.birdix_hcp,
+    wins: myLive.wins,
+    losses: myLive.losses,
+    winStreak: myLive.win_streak,
+    lossStreak: myLive.loss_streak,
+    realMatchesPlayed: myLive.real_matches_played,
+    pendingHcpMargin: myLive.pending_hcp_margin,
+  };
+  const rivalProfileForCalc = {
+    birdixHcp: rivalLive.birdix_hcp,
+    wins: rivalLive.wins,
+    losses: rivalLive.losses,
+    winStreak: rivalLive.win_streak,
+    lossStreak: rivalLive.loss_streak,
+    realMatchesPlayed: rivalLive.real_matches_played,
+    pendingHcpMargin: rivalLive.pending_hcp_margin,
+  };
 
   const playerDelta = calculateEloDelta(myLive.points, rivalLive.points, result);
-  const playerNewHcp = calculateBirdixHcpAfterMatch(myProfileForCalc, { holes, playerPoints });
+  const playerHcpResult = calculateBirdixHcpCalibration(myProfileForCalc, { holes, playerPoints });
   const playerStreak = calculateStreakAfterMatch(myProfileForCalc, result);
 
-  const rivalNewHcp = calculateBirdixHcpAfterMatch(rivalProfileForCalc, { holes, playerPoints: rivalPoints });
+  const rivalHcpResult = calculateBirdixHcpCalibration(rivalProfileForCalc, { holes, playerPoints: rivalPoints });
   const rivalStreak = calculateStreakAfterMatch(rivalProfileForCalc, rivalResult);
 
   const newPointsMe = toRankingPoints(myLive.points + playerDelta);
@@ -195,8 +307,8 @@ export const confirmMatchResult = async ({
 
   // Los deltas ya están calculados desde "mi" perspectiva; aquí solo se
   // colocan en las columnas _a/_b correctas según de qué lado soy yo.
-  const me = { points: newPointsMe, hcp: playerNewHcp, ...playerStreak };
-  const rival = { points: newPointsRival, hcp: rivalNewHcp, ...rivalStreak };
+  const me = { points: newPointsMe, hcpResult: playerHcpResult, ...playerStreak };
+  const rival = { points: newPointsRival, hcpResult: rivalHcpResult, ...rivalStreak };
   const a = playerSide === "player_a" ? me : rival;
   const b = playerSide === "player_a" ? rival : me;
 
@@ -204,8 +316,8 @@ export const confirmMatchResult = async ({
     p_match_id: matchId,
     p_new_points_a: a.points,
     p_new_points_b: b.points,
-    p_new_hcp_a: a.hcp,
-    p_new_hcp_b: b.hcp,
+    p_new_hcp_a: a.hcpResult.hcp,
+    p_new_hcp_b: b.hcpResult.hcp,
     p_new_wins_a: a.wins,
     p_new_losses_a: a.losses,
     p_new_win_streak_a: a.winStreak,
@@ -214,10 +326,21 @@ export const confirmMatchResult = async ({
     p_new_losses_b: b.losses,
     p_new_win_streak_b: b.winStreak,
     p_new_loss_streak_b: b.lossStreak,
+    p_new_real_matches_played_a: a.hcpResult.realMatchesPlayed,
+    p_new_pending_hcp_margin_a: a.hcpResult.pendingHcpMargin,
+    p_new_real_matches_played_b: b.hcpResult.realMatchesPlayed,
+    p_new_pending_hcp_margin_b: b.hcpResult.pendingHcpMargin,
   });
   if (applyError) throw applyError;
 
-  return { applied: true, newPoints: newPointsMe, delta: playerDelta, newBirdixHcp: playerNewHcp };
+  return {
+    applied: true,
+    newPoints: newPointsMe,
+    delta: playerDelta,
+    newBirdixHcp: playerHcpResult.hcp,
+    hcpCalibrating: playerHcpResult.calibrating,
+    realMatchesPlayed: playerHcpResult.realMatchesPlayed,
+  };
 };
 
 /**
