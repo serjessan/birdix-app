@@ -64,6 +64,11 @@ import { listCourses } from "./lib/api/courses";
 import { queueMatchHoleWrite, mergeHydratedHoles } from "./lib/matchSync";
 import { useMatchRealtime } from "./hooks/useMatchRealtime";
 
+// Orden de grupos en la pantalla de selección de mazo (D18, /design-consultation
+// 25 ago 2026) — por tamaño de grupo, para que el primer bloque que vea el
+// jugador tenga más opciones donde elegir.
+const CARD_GROUP_ORDER = ["Ofensiva", "Defensa", "Sabotaje", "Reacción"];
+
 /* =========================================================================
    BIRDIX · Prototipo frontend
    Mobile-first · React + Tailwind (clases core) · lucide-react
@@ -949,7 +954,7 @@ const LoadingLine = ({ text }) => (
 
 const AuthScreen = ({ onLogin, onRegister }) => {
   const [mode, setMode] = useState("welcome"); // welcome | login | register
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "", accept: false });
+  const [form, setForm] = useState({ name: "", lastName: "", email: "", password: "", confirm: "", accept: false });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
@@ -969,6 +974,7 @@ const AuthScreen = ({ onLogin, onRegister }) => {
   const submitRegister = async () => {
     const errs = {};
     if (!form.name.trim()) errs.name = "Indica tu nombre.";
+    if (!form.lastName.trim()) errs.lastName = "Indica tu apellido.";
     if (!validateEmail(form.email)) errs.email = "Email no válido.";
     if (!form.password || form.password.length < 6) errs.password = "Mínimo 6 caracteres.";
     if (form.password !== form.confirm) errs.confirm = "No coincide con la contraseña.";
@@ -976,7 +982,8 @@ const AuthScreen = ({ onLogin, onRegister }) => {
     if (Object.keys(errs).length) return setErrors(errs);
     setErrors({});
     setLoading(true);
-    const { error } = await onRegister({ name: form.name, email: form.email, password: form.password });
+    const fullName = `${form.name.trim()} ${form.lastName.trim()}`;
+    const { error } = await onRegister({ name: fullName, email: form.email, password: form.password });
     setLoading(false);
     if (error) setErrors({ email: error });
   };
@@ -1047,6 +1054,16 @@ const AuthScreen = ({ onLogin, onRegister }) => {
               placeholder="Tu nombre"
               icon={User}
               error={errors.name}
+            />
+          )}
+          {mode === "register" && (
+            <Field
+              label="Apellido"
+              value={form.lastName}
+              onChange={(v) => setForm({ ...form, lastName: v })}
+              placeholder="Tu apellido"
+              icon={User}
+              error={errors.lastName}
             />
           )}
           <Field
@@ -1372,7 +1389,6 @@ const MatchesScreen = ({
   onCreateMatch,
   onSelectCards,
   onOpenActive,
-  onGoCards,
 }) => {
   const [view, setView] = useState("list"); // list | create | cards
   const [courses, setCourses] = useState([]);
@@ -1397,6 +1413,7 @@ const MatchesScreen = ({
   const [createError, setCreateError] = useState(null);
   const [cardPicks, setCardPicks] = useState([]);
   const [cardModal, setCardModal] = useState(null);
+  const [showHowCardsWork, setShowHowCardsWork] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1694,23 +1711,6 @@ const MatchesScreen = ({
           </Card>
         )}
 
-        <div>
-          <SectionTitle>Historial</SectionTitle>
-          {matches.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={Swords}
-                title="Sin partidas en tu historial"
-                description="Crea tu primera partida 1 vs 1 y empieza a sumar puntos al ranking."
-                action={<PrimaryButton onClick={startCreate} icon={Plus}>Crear partida</PrimaryButton>}
-              />
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {matches.map((m) => <MatchCard key={m.id} match={m} />)}
-            </div>
-          )}
-        </div>
       </div>
     );
   }
@@ -1857,15 +1857,10 @@ const MatchesScreen = ({
           ))}
         </div>
 
-        <div className="flex items-center justify-center gap-4 pt-1">
-          <button onClick={() => setCardModal(CARDS[0])} className="text-[#00703a] text-[13px] font-black active:scale-[0.99] transition">
+        <div className="flex items-center justify-center pt-1">
+          <button onClick={() => setShowHowCardsWork(true)} className="text-[#00703a] text-[13px] font-black active:scale-[0.99] transition">
             ¿Cómo funcionan las cartas?
           </button>
-          {onGoCards && (
-            <button onClick={onGoCards} className="text-slate-500 text-[13px] font-black active:scale-[0.99] transition">
-              Ver las {CARDS.length} cartas
-            </button>
-          )}
         </div>
 
         <div className="sticky bottom-24 pt-2 space-y-2">
@@ -1886,10 +1881,47 @@ const MatchesScreen = ({
         </div>
 
         {cardModal && <CardModal card={cardModal} onClose={() => setCardModal(null)} />}
+        {showHowCardsWork && <HowCardsWorkModal onClose={() => setShowHowCardsWork(false)} />}
       </div>
     );
   }
 };
+
+/**
+ * Explica el mecanismo de las cartas (D25, 27 ago 2026; reescrita en D26
+ * tras feedback directo del fundador — la primera versión resultaba lioso).
+ * Antes reutilizaba CardModal con la primera carta del mazo por accidente,
+ * así que en vez de explicar el sistema mostraba la ficha de "Segundo
+ * Golpe" sin venir a cuento. Solo texto, sin enlace de salida — "Ver las
+ * cartas" sacaba de la pantalla de creación de partida y perdía la
+ * selección en curso.
+ */
+const HowCardsWorkModal = ({ onClose }) => (
+  <div className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-3" onClick={onClose}>
+    <div className="bg-white rounded-3xl max-w-[420px] w-full overflow-hidden ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="p-5 flex items-start justify-between">
+        <h3 className="font-black text-slate-900 text-lg">¿Cómo funcionan las cartas?</h3>
+        <button onClick={onClose} className="h-9 w-9 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+          <X size={18} />
+        </button>
+      </div>
+      <div className="px-5 pb-5 space-y-3">
+        {[
+          "Eliges tus cartas en secreto — ni tu rival sabe cuáles son hasta que las juegues.",
+          "Antes de cada hoyo, y antes de tu primer golpe, decides si juegas una carta o no.",
+          "En cuanto los dos habéis decidido, se revelan y ambos sabéis qué cartas se han jugado.",
+          "El efecto se aplica solo a tu puntuación — 2 cartas (Driver Prohibido, Palo Prohibido) no la tocan: sois los jugadores quienes os encargáis de cumplirlas en el campo.",
+          "9 hoyos → 2 cartas. 18 hoyos → 4 cartas. Máximo 1 carta por hoyo, siempre.",
+        ].map((line, i) => (
+          <div key={i} className="flex items-start gap-3">
+            <div className="h-6 w-6 rounded-full bg-[#E6F4ED] text-[#00703a] text-[12px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</div>
+            <p className="text-slate-700 text-[14px] leading-relaxed">{line}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 
 const ConfirmDialog = ({ title, message, confirmLabel = "Salir", cancelLabel = "Seguir jugando", onConfirm, onCancel }) => (
   <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
@@ -2067,6 +2099,7 @@ const RankingScreen = ({ profile, ranking, position }) => {
                     {isCurrent && <Crown size={14} className="text-white" strokeWidth={2.5} />}
                   </div>
                   <p className={`text-[8px] font-black uppercase tracking-wide ${isCurrent ? "text-slate-900" : "text-slate-400"}`}>{d.name}</p>
+                  <p className="text-[7px] text-slate-400 font-bold">{d.min}+</p>
                 </div>
               </React.Fragment>
             );
@@ -3282,6 +3315,20 @@ const MatchPlayScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFin
    - Nunca bloquea: se puede avanzar de hoyo con el actual sin resolver.
    --------------------------------------------------------------------------*/
 
+/* Retomar la partida donde se dejó. Al recargar la página en mitad de una
+   partida, el hoyo actual volvía siempre al primero aunque hubiera varios
+   jugados: los datos seguían en Supabase, pero la pantalla te dejaba en otro
+   sitio. Se vuelve al primer hoyo sin golpes propios apuntados; si ya están
+   todos, al último. Solo se aplica en la hidratación inicial — un UPDATE del
+   rival por Realtime nunca te mueve de hoyo mientras juegas. */
+const findResumeHole = (rows, mySide, total) => {
+  const byNumber = new Map((rows || []).map((r) => [r.hole_number, r]));
+  for (let i = 0; i < total; i++) {
+    if (!hasStrokeInput(byNumber.get(i + 1)?.[`${mySide}_strokes`])) return i;
+  }
+  return Math.max(total - 1, 0);
+};
+
 const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish, onCancel }) => {
   const total = getMatchHoleCount(match);
   const rivalName = match?.rivalName || "Rival";
@@ -3309,11 +3356,15 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
   const [selfStrokesInput, setSelfStrokesInput] = useState("");
   const [secondShotPrompt, setSecondShotPrompt] = useState(false);
   const [secondShotInput, setSecondShotInput] = useState("");
+  const [revealSheetHole, setRevealSheetHole] = useState(null);
+  const revealSheetShownRef = useRef({});
   const resolvedSignatures = useRef({});
   // Hoyos para los que ya ha llegado un UPDATE de Realtime desde que se
   // montó esta pantalla — protege a la hidratación inicial (más abajo) de
   // pisar un dato que ya sabemos más fresco con una foto REST más vieja.
   const realtimeSeenRef = useRef(new Set());
+  // Solo la primera hidratación reposiciona el hoyo (ver findResumeHole).
+  const resumedRef = useRef(false);
 
   // Nota: sin el efecto de "clampear hole si total cambia" que tiene
   // MatchPlayScreen — aquí `total` sale de match.holes, fijo desde que se
@@ -3368,6 +3419,10 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
       .then((rows) => {
         if (cancelled) return;
         setRowsByHole((prev) => mergeHydratedHoles(prev, rows, realtimeSeenRef.current));
+        if (!resumedRef.current) {
+          resumedRef.current = true;
+          setHole(findResumeHole(rows, mySide, total));
+        }
         setLoadingHoles(false);
       })
       .catch(() => setLoadingHoles(false));
@@ -3535,6 +3590,24 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
   const priorSummary = hole > 0 ? holeSummaries[hole - 1] : null;
   const isBehind = priorSummary ? priorSummary.runningMe < priorSummary.runningRival : false;
 
+  // Hoja de revelación del efecto (D18/D19, /design-consultation 25 ago
+  // 2026): se abre sola, una única vez por hoyo, en el instante exacto en
+  // que ambos han decidido Y el hoyo termina de resolverse — nunca antes,
+  // rompería el equilibrio de Bloqueo (depende de que nadie vea la jugada
+  // del rival hasta que los dos hayan decidido la suya). Si navegas a otro
+  // hoyo antes de que resuelva, no reaparece retroactivamente al volver:
+  // solo dispara mientras sigues viendo el hoyo que se acaba de resolver.
+  useEffect(() => {
+    const summary = holeSummaries[hole];
+    if (!summary || summary.pending) return;
+    const v = summary.view;
+    if (!v.cardsRevealed || !v.my.cardApplied) return;
+    if (!v.my.card && !v.rival.card) return; // nada que revelar, hoyo sin cartas
+    if (revealSheetShownRef.current[summary.holeNumber]) return;
+    revealSheetShownRef.current[summary.holeNumber] = true;
+    setRevealSheetHole(summary.holeNumber);
+  }, [holeSummaries, hole]);
+
   if (!matchCourse) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -3582,10 +3655,11 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     );
   }
 
-  // Selección de mazo (D9): si todavía no he elegido mis cartas para esta
-  // partida (p.ej. soy el rival, la partida ya la creó el otro jugador),
-  // hace falta elegir antes de jugar. Visible al rival una vez elegido —
-  // sin ocultar, la habilidad está en el timing, no en el secreto del mazo.
+  // Selección de mazo (D9, revertida por D26 el 27 ago 2026): si todavía no
+  // he elegido mis cartas para esta partida (p.ej. soy el rival, la partida
+  // ya la creó el otro jugador), hace falta elegir antes de jugar. El mazo
+  // es realmente secreto — match_player_decks solo deja leer tu propia
+  // fila (RLS), el rival nunca ve qué cartas elegiste hasta que las juegues.
   if (deck.length !== required) {
     const deckComplete = deckPicks.length === required;
     const confirmDeckPicks = async () => {
@@ -3612,28 +3686,45 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
               vs {rivalName} {match?.rivalId && <span className="opacity-60">{shortPlayerCode(match.rivalId)}</span>}
             </p>
             <h1 className="text-[26px] font-black tracking-tight text-slate-950 leading-tight">Elige tus cartas</h1>
-            <p className="text-[13px] text-slate-500 font-semibold mt-0.5">Tu rival verá qué cartas eliges — el secreto está en cuándo las juegas.</p>
+            <p className="text-[13px] text-slate-500 font-semibold mt-0.5">Elige en secreto — ni tu rival sabrá qué cartas tienes hasta que las juegues.</p>
           </div>
         </div>
-        <Card className="p-5 rounded-[30px] bg-white ring-black/5 shadow-surface">
+        <Card className="p-5 rounded-[30px] bg-white ring-black/5 shadow-surface space-y-2.5">
+          <div className="flex gap-2">
+            {Array.from({ length: required }).map((_, i) => (
+              <div key={i} className={`flex-1 h-2 rounded-full transition-colors ${i < deckPicks.length ? "bg-[#00703a]" : "bg-slate-200"}`} />
+            ))}
+          </div>
           <p className="text-[13px] font-bold text-slate-900">{deckPicks.length}/{required} elegidas</p>
         </Card>
-        <div className="grid grid-cols-2 gap-3.5">
-          {CARDS.map((c) => (
-            <BirdixCard
-              key={c.id}
-              card={c}
-              selected={deckPicks.includes(c.id)}
-              onClick={() =>
-                setDeckPicks((curr) => {
-                  if (curr.includes(c.id)) return curr.filter((x) => x !== c.id);
-                  if (curr.length >= required) return curr;
-                  return [...curr, c.id];
-                })
-              }
-            />
-          ))}
-        </div>
+        {CARD_GROUP_ORDER.map((groupType) => {
+          const groupCards = CARDS.filter((c) => c.type === groupType);
+          if (!groupCards.length) return null;
+          return (
+            <div key={groupType}>
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">{groupType}</span>
+                <div className="flex-1 h-px bg-slate-200" />
+              </div>
+              <div className="grid grid-cols-2 gap-3.5">
+                {groupCards.map((c) => (
+                  <BirdixCard
+                    key={c.id}
+                    card={c}
+                    selected={deckPicks.includes(c.id)}
+                    onClick={() =>
+                      setDeckPicks((curr) => {
+                        if (curr.includes(c.id)) return curr.filter((x) => x !== c.id);
+                        if (curr.length >= required) return curr;
+                        return [...curr, c.id];
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
         {deckError && <p className="text-[12px] text-[#A8543F] font-semibold text-center">{deckError}</p>}
         <button
           onClick={confirmDeckPicks}
@@ -3708,6 +3799,7 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
     setRivalStrokesInput("");
     setSelfStrokesInput("");
     setSelfStrokesOpen(false);
+    setRevealSheetHole(null); // no reaparece al volver — solo dispara justo al resolver
   };
 
   const setAndSaveSelfStrokes = (raw) => {
@@ -3818,6 +3910,36 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
           </Card>
         </div>
 
+        {/* Carta en juego (D18, /design-consultation 25 ago 2026) — elevada
+            a banda de ancho completo justo debajo de "Puntos del hoyo": las
+            cartas son el corazón de Birdix, no una funcionalidad más, así
+            que su estado pesa más que los golpes en la jerarquía visual. El
+            pulso reutiliza el mismo lenguaje ya definido para el indicador
+            de conexión (DESIGN.md) en vez de inventar una animación nueva. */}
+        {cardStatusPill ? (
+          <div className={`${cardStatusPill.c.accent} rounded-[22px] p-4 ring-1 ring-black/5 shadow-surface flex items-center gap-3`}>
+            <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center flex-shrink-0"><cardStatusPill.c.icon size={19} strokeWidth={2.5} /></div>
+            <div className="flex-1">
+              <p className="text-[9px] uppercase tracking-wider font-bold opacity-70">Carta en juego</p>
+              <p className="font-black text-[16px] leading-tight">{cardStatusPill.c.name}</p>
+              {cardStatusPill.label && (
+                <p className="text-[11px] font-bold opacity-80 mt-0.5 flex items-center gap-1.5">
+                  {!view.cardsRevealed && <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60 animate-pulse" />}
+                  {cardStatusPill.label}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowCardPicker(true)} className="w-full rounded-[22px] bg-white ring-1 ring-dashed ring-[#D67560]/40 shadow-surface px-4 py-4 text-left active:scale-[0.99] transition flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-black text-slate-900">🃏 Jugar una carta</p>
+              <p className="text-[12px] text-slate-500 mt-0.5">{Math.max(0, deck.length - usedCardIds.length)} disponibles este hoyo</p>
+            </div>
+            <ChevronRight size={16} className="text-[#D67560]" />
+          </button>
+        )}
+
         <Card className="p-5 space-y-3 ring-slate-200 shadow-surface">
           <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Golpes del hoyo</span>
           <ScoreInput
@@ -3839,25 +3961,6 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
             </button>
           )}
         </Card>
-
-        {cardStatusPill ? (
-          <div className={`${cardStatusPill.c.accent} rounded-[22px] p-4 ring-1 ring-black/5 shadow-surface flex items-center gap-3`}>
-            <div className="h-11 w-11 rounded-2xl bg-white/75 shadow-sm flex items-center justify-center"><cardStatusPill.c.icon size={18} strokeWidth={2.5} /></div>
-            <div className="flex-1">
-              <p className="text-[9px] uppercase tracking-wider font-bold opacity-70">Carta jugada</p>
-              <p className="font-black text-[15px] leading-tight">{cardStatusPill.c.name}</p>
-              {cardStatusPill.label && <p className="text-[11px] font-bold opacity-80 mt-0.5">{cardStatusPill.label}</p>}
-            </div>
-          </div>
-        ) : (
-          <button onClick={() => setShowCardPicker(true)} className="w-full rounded-[22px] bg-white ring-1 ring-dashed ring-[#D67560]/40 shadow-surface px-4 py-4 text-left active:scale-[0.99] transition flex items-center justify-between">
-            <div>
-              <p className="text-[13px] font-black text-slate-900">🃏 Jugar una carta</p>
-              <p className="text-[12px] text-slate-500 mt-0.5">{Math.max(0, deck.length - usedCardIds.length)} disponibles este hoyo</p>
-            </div>
-            <ChevronRight size={16} className="text-[#D67560]" />
-          </button>
-        )}
 
         {view.cardsRevealed && view.rival.card && (
           <div className="rounded-[18px] bg-slate-50 ring-1 ring-slate-100 px-4 py-3">
@@ -4010,6 +4113,59 @@ const RealMatchPlayScreen = ({ match, userId, ranking, playerBirdixHcp, onFinish
           <p className="absolute bottom-16 text-white/90 text-[13px] font-bold">¡Carta jugada! Toca para continuar.</p>
         </div>
       )}
+
+      {/* Hoja de revelación del efecto (D18/D19, /design-consultation 25 ago
+          2026) — el "flip seco y con peso" que DESIGN.md ya reservaba a
+          revelar carta, aplicado por primera vez al flujo de 2 dispositivos.
+          Solo llega a abrirse cuando bothPlayersDecided ya era true y el
+          hoyo terminó de resolverse (ver el useEffect que arma revealSheetHole
+          más arriba) — nunca antes de que el rival haya decidido su jugada. */}
+      {revealSheetHole && (() => {
+        const summary = holeSummaries.find((s) => s.holeNumber === revealSheetHole);
+        if (!summary) return null;
+        const v = summary.view;
+        const myCard = v.my.card ? CARDS.find((c) => c.id === v.my.card) : null;
+        const rivalCard = v.rival.card ? CARDS.find((c) => c.id === v.rival.card) : null;
+        return (
+          <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setRevealSheetHole(null)}>
+            <div className="bg-white rounded-t-[28px] w-full max-w-[420px] p-5 pb-6 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <p className="text-center text-[10px] uppercase tracking-[0.14em] text-slate-400 font-black">Hoyo {revealSheetHole} resuelto</p>
+              <div className="flex items-center gap-2.5 mt-4">
+                <div className={`flex-1 rounded-2xl p-3 text-center ${myCard ? myCard.accent : "bg-slate-50"}`}>
+                  {myCard ? (
+                    <>
+                      <div className="h-9 w-9 rounded-xl bg-white/70 flex items-center justify-center mx-auto mb-1.5"><myCard.icon size={16} strokeWidth={2.5} /></div>
+                      <p className="text-[9px] uppercase tracking-wider font-bold opacity-60">Tú</p>
+                      <p className="text-[12px] font-black mt-0.5 leading-tight">{myCard.name}{v.my.cardCancelledReason ? " (anulada)" : ""}</p>
+                    </>
+                  ) : (
+                    <p className="text-[12px] text-slate-400 font-bold py-3.5">Sin carta</p>
+                  )}
+                </div>
+                <span className="text-[11px] font-black text-slate-400">VS</span>
+                <div className={`flex-1 rounded-2xl p-3 text-center ${rivalCard ? rivalCard.accent : "bg-slate-50"}`}>
+                  {rivalCard ? (
+                    <>
+                      <div className="h-9 w-9 rounded-xl bg-white/70 flex items-center justify-center mx-auto mb-1.5"><rivalCard.icon size={16} strokeWidth={2.5} /></div>
+                      <p className="text-[9px] uppercase tracking-wider font-bold opacity-60">{rivalName.split(" ")[0]}</p>
+                      <p className="text-[12px] font-black mt-0.5 leading-tight">{rivalCard.name}{v.rival.cardCancelledReason ? " (anulada)" : ""}</p>
+                    </>
+                  ) : (
+                    <p className="text-[12px] text-slate-400 font-bold py-3.5">Sin carta</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-center mt-5 mb-5">
+                <p className="font-display text-[44px] text-[#00703a] leading-none">{v.my.stableford}</p>
+                <p className="text-[11px] text-slate-500 font-bold mt-1">
+                  Tus puntos netos este hoyo{myCard && !v.my.cardCancelledReason ? ` — con ${myCard.name}` : ""}
+                </p>
+              </div>
+              <PrimaryButton onClick={() => setRevealSheetHole(null)} icon={Check}>Continuar</PrimaryButton>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -4546,7 +4702,6 @@ export default function BirdixApp() {
             onOpenActive={() => {
               if (state.activeMatch) setPlaying(true);
             }}
-            onGoCards={() => setTab("cards")}
           />
         )}
         {tab === "cards" && <CardsScreen onBack={() => setTab("home")} />}
