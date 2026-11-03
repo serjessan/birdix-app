@@ -111,6 +111,9 @@ export const getMatchPlayersStatus = async (matchId) => {
   return data;
 };
 
+/** Cuánto puede quedarse una partida en "active" sin que nadie la termine antes de considerarla abandonada (D24, 27 ago 2026). */
+const STALE_ACTIVE_MATCH_MS = 30 * 60 * 1000;
+
 /**
  * Partidas activas donde soy jugador — sin esto, el rival (quien no creó la
  * partida) no tiene forma de descubrirla nunca (D7, gap señalado en el eng
@@ -118,17 +121,36 @@ export const getMatchPlayersStatus = async (matchId) => {
  * partidas donde soy creador o jugador, así que no hace falta un .eq extra.
  * Une course/match_players/profiles en una sola consulta (recursos
  * embebidos de PostgREST vía las FK ya existentes en el esquema).
+ *
+ * Partidas creadas o abiertas que se quedan a medias (nadie termina, nadie
+ * vuelve) se filtran a los 30 minutos y ya no cuentan como activas para
+ * nadie — best-effort, no bloquea esta llamada si falla. RLS solo deja
+ * actualizar `matches` a quien la creó, así que cada dispositivo solo limpia
+ * lo que él mismo creó; lo del rival se limpia solo la próxima vez que su
+ * propio dispositivo llame a esto.
  */
 export const listMyActiveMatches = async (userId) => {
+  const cutoffIso = new Date(Date.now() - STALE_ACTIVE_MATCH_MS).toISOString();
+
+  supabase
+    .from("matches")
+    .update({ status: "abandoned" })
+    .eq("status", "active")
+    .eq("created_by", userId)
+    .lt("started_at", cutoffIso)
+    .then(() => {}, () => {});
+
   const { data, error } = await supabase
     .from("matches")
     .select(`
       id, course_id, status, format, started_at,
       courses ( name, location ),
-      match_players ( side, user_id, points_before, birdix_hcp_at_match, selected_cards, profiles ( full_name ) ),
-      match_holes ( hole_number )
+      match_players ( side, user_id, points_before, birdix_hcp_at_match, profiles ( full_name ) ),
+      match_holes ( hole_number ),
+      match_player_decks ( user_id, selected_cards )
     `)
     .eq("status", "active")
+    .gte("started_at", cutoffIso)
     .order("started_at", { ascending: false });
   if (error) throw error;
 
@@ -137,6 +159,9 @@ export const listMyActiveMatches = async (userId) => {
       const me = row.match_players.find((p) => p.user_id === userId);
       const rival = row.match_players.find((p) => p.user_id !== userId);
       if (!me || !rival) return null; // no debería pasar bajo RLS, pero no reventar si pasa
+      // D26: RLS de match_player_decks solo deja ver tu propia fila — el
+      // embed ya viene sin la del rival, .find() aquí es solo por claridad.
+      const myDeck = row.match_player_decks.find((d) => d.user_id === userId);
       return {
         id: row.id,
         courseId: row.course_id,
@@ -149,7 +174,7 @@ export const listMyActiveMatches = async (userId) => {
         rivalRank: toRankingPoints(rival.points_before),
         rivalBirdixHcp: rival.birdix_hcp_at_match,
         rivalHcp: rival.birdix_hcp_at_match,
-        selectedCards: me.selected_cards || [],
+        selectedCards: myDeck?.selected_cards || [],
         matchType: "1v1",
         format: "1 vs 1",
         status: "pending",
@@ -345,14 +370,22 @@ export const confirmMatchResult = async ({
 
 /**
  * Confirma tu mazo para una partida ya creada — el flujo de Player B (D7,
- * T8): el mazo es visible al rival (D9) pero cada uno lo elige por su
- * propio dispositivo. RLS de match_players ya permite a cada jugador
- * escribir su propia fila (PR1 D3), sin necesitar ningún RPC.
+ * T8), cada uno lo elige por su propio dispositivo. Las cartas en sí van a
+ * `match_player_decks` (D26, 27 ago 2026: mazo realmente secreto — su RLS
+ * solo deja leer tu propia fila, nunca la del rival). `deck_confirmed_at`
+ * se queda en `match_players` — no revela qué cartas, solo que ya decidiste,
+ * y de eso sí necesita enterarse el rival (sala de espera, cierre de la
+ * ventana de elección del hoyo).
  */
 export const confirmDeck = async ({ matchId, userId, selectedCards }) => {
+  const { error: deckError } = await supabase
+    .from("match_player_decks")
+    .insert({ match_id: matchId, user_id: userId, selected_cards: selectedCards });
+  if (deckError) throw deckError;
+
   const { error } = await supabase
     .from("match_players")
-    .update({ selected_cards: selectedCards, deck_confirmed_at: new Date().toISOString() })
+    .update({ deck_confirmed_at: new Date().toISOString() })
     .eq("match_id", matchId)
     .eq("user_id", userId);
   if (error) throw error;
