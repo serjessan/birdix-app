@@ -76,6 +76,101 @@ riesgo para el grupo cerrado del fundador, pero real.
 **Priority:** P1
 **Depends on:** Ninguna — construido.
 
+### Cierre completo de F6: apply_match_result acepta cualquier delta de suma cero
+
+**What:** Cerrar de verdad el agujero por el que cualquiera de los dos jugadores puede
+regalarse los puntos del otro. `apply_match_result` valida que el llamante sea jugador,
+que existan 2 confirmaciones y que los deltas sumen cero, pero **no** la magnitud: el
+ganador se deriva del signo del delta, no de los hoyos jugados. El cierre real exige que
+el servidor recalcule el Stableford neto desde `match_holes` y compare la magnitud del
+delta contra el resultado.
+
+**Why:** Es el único camino que mueve Rango, y el Rango es el producto entero. Hoy es
+aceptable (grupo cerrado, sin adversario real); deja de serlo con registro abierto.
+
+**Disparador (no es un P3 a secas):** P3 hoy, **BLOQUEANTE antes de habilitar registro
+público o de compartir la app fuera del grupo conocido.** Si se abre la app sin cerrar
+esto, el primer jugador con curiosidad y las devtools abiertas se pone líder.
+
+**Pros:** cierra la única superficie que mueve Rango. **Cons:** recalcular la magnitud
+en servidor choca con la decisión vinculante de PR1 (la fórmula de Elo vive solo en
+`rango.js`, nunca duplicada en SQL); hay que decidir cómo convive, y no es barato.
+
+**Context:** detectado en `/plan-eng-review` del 5 nov 2026 (hallazgo F6). En ese mismo
+review se añadieron a `apply_match_result` dos guardas **de dirección**, que NO cierran
+esto: la del abandono (el ganador no puede ser `abandoned_by`) y la de Stableford (el
+ganador declarado tiene que ser el de mayor Stableford acumulado, sumando
+`match_holes.player_a_stableford` / `player_b_stableford`). Las dos son defensa en
+profundidad, no cierre: esas columnas también las escribe el cliente y la política UPDATE
+de `match_holes` es solo por fila, así que un cliente malicioso puede escribirlas.
+**Tensión con D2 del mismo review:** `abandon_match` ahora escribe él mismo las 2 filas
+de `match_confirmations`, así que el requisito de "2 confirmaciones" ya puede fabricarlo
+el servidor — eso ensancha ligeramente F6 y obliga a que la guarda del ganador del
+abandono sea hermética.
+
+**Effort:** M
+**Priority:** P3 (condicional: bloqueante antes de registro público)
+**Depends on:** relacionado con "RLS por columna en match_holes" — sin esa restricción,
+cualquier guarda basada en columnas de `match_holes` es falsificable.
+
+### Permisos por columna en profiles: la fuga de email está CERRADA, verificar que sigue
+
+**What:** Mantener cerrada la lectura de `profiles.email` desde la clave anónima. La
+política RLS `profiles are viewable by everyone` tiene `qual = true` y deja leer todas
+las columnas; el cierre no es RLS (Postgres no tiene RLS por columna) sino **permisos por
+columna**: `revoke select on public.profiles from anon, authenticated` más un
+`grant select (columnas permitidas)` que excluye `email`.
+
+**Why:** La clave anónima viaja en el bundle, así que cualquiera que abriera la web podía
+pedir `select=email` y descargarse los correos de los 5 jugadores reales, dos de ellos
+fuera del círculo cercano. Datos personales de personas reales.
+
+**Estado — cerrado en PR-A el 5 nov 2026** (`/plan-eng-review`). Antes de aplicar la
+sentencia hubo que cambiar dos `select("*")` sobre `profiles` por listas explícitas de
+columnas (`src/App.jsx:4363` y `:4454`): con permisos por columna, `select=*` se expande
+a todas las columnas incluida `email` y la petición falla entera con 42501. El bundle
+desplegado también los hacía, así que el SQL **no podía ir antes** del deploy del cliente
+arreglado. La app no necesita `profiles.email`: los cuatro sitios que leen el correo lo
+sacan de Auth (`authSession.user.email`, `data.user.email`), no de la tabla.
+
+**Qué queda por vigilar:** cualquier `select("*")` nuevo sobre `profiles`, y cualquier
+columna nueva en la tabla, que nace **sin** grant y por tanto invisible — un `select` que
+la pida fallará con 42501 hasta que se añada al grant. Es el modo de fallo a recordar.
+
+**Effort:** XS (vigilancia)
+**Priority:** P3
+**Depends on:** ninguna — ya aplicado.
+
+### 2vs2 real contra Supabase (el flujo local se borró en PR-A)
+
+**What:** Construir el 2vs2 de verdad contra Supabase: esquema de participantes para 4
+jugadores y validación explícita de que las políticas RLS funcionan igual con 2 y con 4.
+
+**Why:** El 2vs2 existía solo como flujo local contra `FAKE_RIVALS`, sin guardar nada. Un
+2vs2 que no persiste y juega contra gente inventada es peor que no tenerlo: el primer
+amigo que lo pruebe piensa que la app está rota.
+
+**Estado — borrado, no oculto, en PR-A el 5 nov 2026.** La primera propuesta era ocultar
+la opción y dejar el código en su sitio, pero el fundador detectó el choque: PR-A borra
+`FAKE_RIVALS` y el flujo 2vs2 **depende** de él en 5 puntos verificados —
+`buildTeamPlayers` (`App.jsx:401-403`), el `fallback` (`:422-424`), el draft inicial
+(`:1400-1402`), la creación (`:1487-1488`) y `renderPlayerPicker`, que hace
+`FAKE_RIVALS.map` (`:1571`). No se podían hacer las dos cosas: o se rompía el 2vs2, o
+`FAKE_RIVALS` sobrevivía en el bundle para sostener código muerto e inalcanzable. Se
+borró, que es lo coherente con ponytail y con "evitar deuda técnica desde el inicio".
+
+**Cómo recuperarlo:** el código del 2vs2 vive en el commit **b1f5828** (rama `main`,
+`github.com/serjessan/birdix-app`). `git show b1f5828:src/App.jsx` lo devuelve entero.
+
+**Gate explícito:** no se construye el 2vs2 real hasta que el 1vs1 funcione con el grupo.
+A 5 nov 2026: 5 jugadores registrados, **0 partidas completadas** — esa señal todavía no
+existe. La premisa 5 del `/office-hours` del 9 ago ya dejó el 2vs2 sin fecha por esto
+mismo.
+
+**Effort:** XL
+**Priority:** P3
+**Depends on:** que una partida 1vs1 real se complete de principio a fin con el grupo.
+
 ### Columna sin uso: card_cancelled_reason
 
 **What:** Decidir el propósito de `card_cancelled_reason` (columna singular en
