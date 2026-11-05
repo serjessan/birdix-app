@@ -111,9 +111,6 @@ export const getMatchPlayersStatus = async (matchId) => {
   return data;
 };
 
-/** Cuánto puede quedarse una partida en "active" sin que nadie la termine antes de considerarla abandonada (D24, 27 ago 2026). */
-const STALE_ACTIVE_MATCH_MS = 30 * 60 * 1000;
-
 /**
  * Partidas activas donde soy jugador — sin esto, el rival (quien no creó la
  * partida) no tiene forma de descubrirla nunca (D7, gap señalado en el eng
@@ -122,24 +119,22 @@ const STALE_ACTIVE_MATCH_MS = 30 * 60 * 1000;
  * Une course/match_players/profiles en una sola consulta (recursos
  * embebidos de PostgREST vía las FK ya existentes en el esquema).
  *
- * Partidas creadas o abiertas que se quedan a medias (nadie termina, nadie
- * vuelve) se filtran a los 30 minutos y ya no cuentan como activas para
- * nadie — best-effort, no bloquea esta llamada si falla. RLS solo deja
- * actualizar `matches` a quien la creó, así que cada dispositivo solo limpia
- * lo que él mismo creó; lo del rival se limpia solo la próxima vez que su
- * propio dispositivo llame a esto.
+ * Aquí había un barredor (D24, 27 ago 2026) que marcaba `abandoned` toda
+ * partida `active` de más de 30 minutos y la filtraba de la lectura.
+ * Eliminado en el `/plan-eng-review` del 5 nov 2026 (hallazgo F2, decisión
+ * D3) por dos razones: una vuelta de 9 hoyos dura unas 2 horas, así que
+ * hacía desaparecer la partida del móvil de los dos jugadores a mitad de
+ * juego; y escribía `abandoned` sin `abandoned_by`, lo que choca de frente
+ * con la regla nueva de que `abandoned` significa derrota para quien
+ * abandona. Nunca llegó a producción: este código se empujó el 3 nov y el
+ * build de Vercel no ha publicado desde el 24 ago.
+ *
+ * La caducidad pasa a ser **derivada, nunca escrita**: la guarda de "una
+ * partida viva por jugador" dentro de `create_match` ignora por antigüedad
+ * (`pending` de más de 24 h, `active` de más de 6 h) y `matches.status` solo
+ * lo escribe un jugador al actuar. Ver PLAN-EMBUDO.md, decisión D3.
  */
 export const listMyActiveMatches = async (userId) => {
-  const cutoffIso = new Date(Date.now() - STALE_ACTIVE_MATCH_MS).toISOString();
-
-  supabase
-    .from("matches")
-    .update({ status: "abandoned" })
-    .eq("status", "active")
-    .eq("created_by", userId)
-    .lt("started_at", cutoffIso)
-    .then(() => {}, () => {});
-
   const { data, error } = await supabase
     .from("matches")
     .select(`
@@ -150,7 +145,6 @@ export const listMyActiveMatches = async (userId) => {
       match_player_decks ( user_id, selected_cards )
     `)
     .eq("status", "active")
-    .gte("started_at", cutoffIso)
     .order("started_at", { ascending: false });
   if (error) throw error;
 

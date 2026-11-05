@@ -136,17 +136,13 @@ describe("getMatchPlayersStatus", () => {
 describe("listMyActiveMatches", () => {
   const mockActiveMatchesQuery = (rows) => {
     const order = vi.fn().mockResolvedValue({ data: rows, error: null });
-    const gte = vi.fn(() => ({ order }));
-    const eq = vi.fn(() => ({ gte }));
+    const eq = vi.fn(() => ({ order }));
     const select = vi.fn(() => ({ eq }));
-    // Limpieza best-effort de partidas abandonadas (D24) — update().eq().eq().lt().then()
-    const updateThen = vi.fn((onFulfilled) => Promise.resolve().then(onFulfilled));
-    const updateLt = vi.fn(() => ({ then: updateThen }));
-    const updateEq2 = vi.fn(() => ({ lt: updateLt }));
-    const updateEq1 = vi.fn(() => ({ eq: updateEq2 }));
-    const update = vi.fn(() => ({ eq: updateEq1 }));
+    // `update` se expone a propósito aunque el código ya no lo use: el test de
+    // abajo asserta que NO se llama (el barredor de 30 min se borró, F2/D3).
+    const update = vi.fn();
     fromMock.mockReturnValue({ select, update });
-    return { select, eq, gte, order, update };
+    return { select, eq, order, update };
   };
 
   it("normalizes an active match row into the shape the app expects, from the creator's side", async () => {
@@ -240,42 +236,33 @@ describe("listMyActiveMatches", () => {
 
   it("throws on a Supabase error", async () => {
     const order = vi.fn().mockResolvedValue({ data: null, error: new Error("network") });
-    fromMock.mockReturnValue({
-      select: () => ({ eq: () => ({ gte: () => ({ order }) }) }),
-      update: () => ({ eq: () => ({ eq: () => ({ lt: () => ({ then: () => {} }) }) }) }),
-    });
+    fromMock.mockReturnValue({ select: () => ({ eq: () => ({ order }) }) });
 
     const { listMyActiveMatches } = await import("./matches");
     await expect(listMyActiveMatches("me")).rejects.toThrow("network");
   });
 
-  it("D24: filtra partidas activas de más de 30 min y dispara la limpieza best-effort solo sobre lo que yo creé", async () => {
-    const { update, eq, gte } = mockActiveMatchesQuery([]);
+  // Sustituye a los 2 tests del barredor de 30 min (D24), borrado en el
+  // /plan-eng-review del 5 nov 2026 — hallazgo F2, decisión D3. Aquellos
+  // asertaban el comportamiento contrario: que la lectura filtrara por
+  // antigüedad y que se escribiera `abandoned`. Este test existe para que
+  // nadie lo reintroduzca: una vuelta de 9 hoyos dura ~2 h, así que filtrar a
+  // los 30 min borraba la partida de la pantalla de los dos jugadores a mitad
+  // de juego, y escribir `abandoned` sin `abandoned_by` choca con la regla de
+  // que `abandoned` significa derrota para quien abandona.
+  it("F2/D3: no filtra por antigüedad ni escribe estado — la caducidad es derivada, nunca escrita", async () => {
+    const { eq, order, update } = mockActiveMatchesQuery([]);
 
     const { listMyActiveMatches } = await import("./matches");
     await listMyActiveMatches("me");
 
-    // consulta de lectura: solo activas iniciadas en los últimos 30 min
+    // Único filtro: el estado. Ninguno por fecha.
+    expect(eq).toHaveBeenCalledTimes(1);
     expect(eq).toHaveBeenCalledWith("status", "active");
-    const gteArgs = gte.mock.calls[0];
-    expect(gteArgs[0]).toBe("started_at");
-    expect(new Date(gteArgs[1]).getTime()).toBeCloseTo(Date.now() - 30 * 60 * 1000, -3);
+    expect(order).toHaveBeenCalledWith("started_at", { ascending: false });
 
-    // limpieza: solo mis partidas activas viejas pasan a abandoned
-    expect(update).toHaveBeenCalledWith({ status: "abandoned" });
-  });
-
-  it("una escritura de limpieza que falla no rompe la lectura de partidas activas", async () => {
-    const order = vi.fn().mockResolvedValue({ data: [], error: null });
-    const gte = vi.fn(() => ({ order }));
-    const eq = vi.fn(() => ({ gte }));
-    const select = vi.fn(() => ({ eq }));
-    const rejectedThen = vi.fn((onFulfilled, onRejected) => Promise.reject(new Error("cleanup down")).then(onFulfilled, onRejected));
-    const update = vi.fn(() => ({ eq: () => ({ eq: () => ({ lt: () => ({ then: rejectedThen }) }) }) }));
-    fromMock.mockReturnValue({ select, update });
-
-    const { listMyActiveMatches } = await import("./matches");
-    await expect(listMyActiveMatches("me")).resolves.toEqual([]);
+    // Y ni una escritura: listar partidas es de solo lectura.
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
