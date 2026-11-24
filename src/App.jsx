@@ -489,7 +489,9 @@ function reducer(state, action) {
       return {
         ...state,
         topPlayers: Array.isArray(topPlayers) ? topPlayers : state.topPlayers,
-        myPosition: Number.isFinite(Number(myPosition)) ? Number(myPosition) : null,
+        // Number(null) es 0 y Number.isFinite(0) es true: sin este > 0, un
+        // jugador sin partidas leia "#0" en vez de "Sin clasificar".
+        myPosition: Number(myPosition) > 0 ? Number(myPosition) : null,
         rankingLoaded: true,
       };
     }
@@ -3769,38 +3771,6 @@ export default function BirdixApp() {
             });
         }
 
-        // Clasificación real (PR-A, T3 ampliada): sustituye a FAKE_TOP, al
-        // array `around` inventado y al `position: 4287`. Va aparte del
-        // refresco de perfil porque su estado vacío es informativo por sí
-        // mismo: si nadie ha jugado, `topPlayers` llega vacío y `myPosition`
-        // null, y la pantalla lo dice en vez de regalar un "Puesto 1".
-        if (authSession) {
-          Promise.all([
-            listRankedPlayers(),
-            supabase
-              .from("profiles")
-              .select("points, real_matches_played, created_at")
-              .eq("id", authSession.user.id)
-              .single()
-              .then(({ data: me }) =>
-                me
-                  ? getMyRankingPosition({
-                      points: me.points,
-                      realMatchesPlayed: me.real_matches_played,
-                      createdAt: me.created_at,
-                    })
-                  : null
-              ),
-          ])
-            .then(([topPlayers, myPosition]) => {
-              dispatch({ type: "REFRESH_RANKING", payload: { topPlayers, myPosition } });
-            })
-            .catch(() => {
-              // Sin cobertura: la Clasificación se queda en "Cargando…" y se
-              // resuelve en el próximo arranque. No bloquea el resto.
-            });
-        }
-
         const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
           if (!newSession) dispatch({ type: "LOGOUT" });
         });
@@ -3815,6 +3785,47 @@ export default function BirdixApp() {
       unsub();
     };
   }, []);
+
+  /* --- Clasificación real (PR-A, T3 ampliada) ---
+     Sustituye a FAKE_TOP, al array `around` inventado y al `position: 4287`.
+     Va en su propio efecto y colgada de `state.user?.id`, no del arranque:
+     cuando vivía dentro de la hidratación solo se pedía si YA había sesión al
+     montar, así que quien iniciaba sesión sin recargar se quedaba con
+     "Cargando clasificación…" para siempre. Su estado vacío es informativo por
+     sí mismo: si nadie ha jugado, `topPlayers` llega vacío y `myPosition` null,
+     y la pantalla lo dice en vez de regalar un "Puesto 1". */
+  useEffect(() => {
+    const uid = state.user?.id;
+    if (!uid) return;
+    let cancelled = false;
+    Promise.all([
+      listRankedPlayers(),
+      supabase
+        .from("profiles")
+        .select("points, real_matches_played, created_at")
+        .eq("id", uid)
+        .single()
+        .then(({ data: me }) =>
+          me
+            ? getMyRankingPosition({
+                points: me.points,
+                realMatchesPlayed: me.real_matches_played,
+                createdAt: me.created_at,
+              })
+            : null
+        ),
+    ])
+      .then(([topPlayers, myPosition]) => {
+        if (!cancelled) dispatch({ type: "REFRESH_RANKING", payload: { topPlayers, myPosition } });
+      })
+      .catch(() => {
+        // Sin cobertura: se queda en "Cargando…" y se resuelve al volver a
+        // entrar. No bloquea el resto de la app.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.user?.id]);
 
   /* --- Descubrir partida activa real (D7) ---
      Sin esto, el rival (quien no creó la partida) nunca se entera de que
