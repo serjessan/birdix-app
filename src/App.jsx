@@ -31,7 +31,6 @@ import {
   AlertCircle,
   CircleDot,
   Search,
-  Info,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import {
@@ -39,14 +38,13 @@ import {
   normalizeBirdixHcp,
   formatBirdixHcp,
   getProfileBirdixHcp,
-  getRivalBirdixHcp,
   toRankingPoints,
   calculateEloDelta,
   calculateBirdixHcpAfterMatch,
   REAL_HCP_CALIBRATION_MATCHES,
 } from "./domain/rango";
-import { CARDS, applyStablefordCardEffect, isCardPlayable, cardNeedsTarget } from "./domain/cards";
-import { hasStrokeInput, calculateStablefordPoints, getHandicapStrokesForHole, strokesForIndex } from "./domain/stableford";
+import { CARDS, applyStablefordCardEffect, isCardPlayable } from "./domain/cards";
+import { hasStrokeInput, calculateStablefordPoints, getHandicapStrokesForHole } from "./domain/stableford";
 import { resolveHoleCards } from "./domain/holeResolution";
 import { deriveHoleView, bothPlayersDecided, computeBaseHoleScores, applyCardToBaseScore } from "./domain/matchHoleView";
 import {
@@ -256,15 +254,6 @@ const initialsOf = (name) =>
  */
 const PROFILE_COLUMNS = "id, full_name, birdix_hcp, points";
 
-const FAKE_RIVALS = [
-  { id: "r1", name: "Carlos Mendoza", hcp: 9, birdixHcp: 9, club: "Real Club La Moraleja", rank: 1342, division: "platino", avatar: "CM" },
-  { id: "r2", name: "Marta Riera", hcp: 14, birdixHcp: 14, club: "Sotogrande", rank: 1180, division: "platino", avatar: "MR" },
-  { id: "r3", name: "Diego Vela", hcp: 6, birdixHcp: 6, club: "Valderrama", rank: 1820, division: "elite", avatar: "DV" },
-  { id: "r4", name: "Laura Pinto", hcp: 22, birdixHcp: 22, club: "El Saler", rank: 640, division: "plata", avatar: "LP" },
-  { id: "r5", name: "Iván Castro", hcp: 11, birdixHcp: 11, club: "PGA Catalunya", rank: 980, division: "oro", avatar: "IC" },
-  { id: "r6", name: "Nuria Almansa", hcp: 17, birdixHcp: 17, club: "La Reserva", rank: 720, division: "plata", avatar: "NA" },
-];
-
 /* Espejo local de los 3 campos reales que ya existen en Supabase
    (courses/course_holes) — puente temporal hasta que D7 reescriba
    MatchPlayScreen para leer course_holes directamente. Los `id` son los
@@ -384,72 +373,6 @@ const initialsFromName = (name = "?") =>
 // legible de mostrar el id que cada jugador ya tiene.
 const shortPlayerCode = (id) => (id ? `#${String(id).replace(/-/g, "").slice(0, 4).toUpperCase()}` : null);
 
-const isTeamMatch = (match) =>
-  match?.matchType === "2v2" || match?.format === "2 vs 2" || match?.format === "2v2";
-
-const toMatchPlayer = (player, slot, team) => ({
-  id: player?.id || `${team}_${slot}`,
-  slot,
-  team,
-  name: player?.name || "Jugador",
-  avatar: player?.avatar || initialsFromName(player?.name),
-  club: player?.club || "",
-  hcp: normalizeHcp(player?.hcp),
-  birdixHcp: normalizeBirdixHcp(player?.birdixHcp ?? player?.hcp),
-  rank: toRankingPoints(player?.rank ?? player?.ranking ?? 1000),
-  isCurrentUser: Boolean(player?.isCurrentUser),
-});
-
-const buildTeamPlayers = (profile, ranking, draft) => {
-  const currentUser = toMatchPlayer(
-    {
-      id: "me",
-      name: profile?.name || "Tú",
-      avatar: initialsFromName(profile?.name || "Tú"),
-      hcp: profile?.hcp,
-      birdixHcp: getProfileBirdixHcp(profile),
-      rank: ranking,
-      club: profile?.club || "",
-      isCurrentUser: true,
-    },
-    "player",
-    "A"
-  );
-  const teammate = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.teammateId), "teammate", "A");
-  const rival1 = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.rivalId), "rival1", "B");
-  const rival2 = toMatchPlayer(FAKE_RIVALS.find((r) => r.id === draft.rival2Id), "rival2", "B");
-  return [currentUser, teammate, rival1, rival2];
-};
-
-const getTeamPlayers = (match, ranking = 1000, playerBirdixHcp = 18) => {
-  if (Array.isArray(match?.players) && match.players.length >= 4) {
-    return match.players.map((p) =>
-      toMatchPlayer(
-        {
-          ...p,
-          rank: p.isCurrentUser ? ranking : p.rank,
-          birdixHcp: p.isCurrentUser ? p.birdixHcp ?? playerBirdixHcp : p.birdixHcp,
-        },
-        p.slot,
-        p.team
-      )
-    );
-  }
-  const fallback = {
-    teammateId: FAKE_RIVALS[1]?.id,
-    rivalId: match?.rivalId || FAKE_RIVALS[0]?.id,
-    rival2Id: FAKE_RIVALS[2]?.id,
-  };
-  return buildTeamPlayers({ name: "Tú", hcp: playerBirdixHcp, birdixHcp: playerBirdixHcp }, ranking, fallback);
-};
-
-const averageRank = (players) => {
-  const list = Array.isArray(players) ? players : [];
-  if (!list.length) return 1000;
-  return Math.round(list.reduce((sum, p) => sum + toRankingPoints(p.rank), 0) / list.length);
-};
-
-const oppositeResult = (result) => (result === "win" ? "loss" : result === "loss" ? "win" : "draw");
 
 const getCourseById = (courseIdOrName, fallback = COURSES[0]) =>
   COURSES.find((c) => c.id === courseIdOrName || c.name === courseIdOrName) || fallback;
@@ -1032,7 +955,7 @@ const AuthScreen = ({ onLogin, onRegister }) => {
             <p className="mt-3 text-slate-500 text-[15px] max-w-xs">El nuevo golf competitivo.</p>
 
             <div className="mt-10 flex items-center gap-2 flex-wrap justify-center">
-              <Pill icon={Swords} tone="emerald">1 vs 1 · 2 vs 2</Pill>
+              <Pill icon={Swords} tone="emerald">1 vs 1</Pill>
               <Pill icon={Layers} tone="amber">{CARDS.length} cartas</Pill>
               <Pill icon={Trophy} tone="sky">Ranking global</Pill>
             </div>
@@ -1272,7 +1195,7 @@ const HomeScreen = ({ profile, ranking, matches, onCreate, onGoCards, onGoProfil
             </div>
             <div className="hidden sm:block text-right">
               <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Formato</p>
-              <p className="text-slate-950 font-black mt-1">{profile?.format === "2v2" ? "2 vs 2" : "1 vs 1"}</p>
+              <p className="text-slate-950 font-black mt-1">1 vs 1</p>
             </div>
           </div>
 
@@ -1411,7 +1334,6 @@ const MatchesScreen = ({
   selectedCards,
   profile,
   userId,
-  ranking,
   onCreateMatch,
   onSelectCards,
   onOpenActive,
@@ -1423,13 +1345,11 @@ const MatchesScreen = ({
     format: profile?.format || "1v1",
     holes: profile?.holes || "9",
     course: "",
-    teammateId: FAKE_RIVALS[1]?.id || "",
-    rivalId: FAKE_RIVALS[0]?.id || "",
-    rival2Id: FAKE_RIVALS[2]?.id || "",
   });
-  // 1vs1 real: buscar rival por nombre entre profiles reales, sustituye a
-  // FAKE_RIVALS (T7). El 2vs2 de abajo sigue local-only con FAKE_RIVALS —
-  // fuera de alcance de PR1, ya deshabilitado en el selector de formato.
+  // Rival real, buscado por nombre entre los profiles de Supabase. El flujo
+  // 2vs2 local contra jugadores inventados se borró en PR-A (T3) — ver
+  // TODOS.md, "2vs2 real contra Supabase", recuperable desde el commit
+  // b1f5828.
   const [selectedRival, setSelectedRival] = useState(null);
   const [rivalQuery, setRivalQuery] = useState("");
   const [rivalResults, setRivalResults] = useState([]);
@@ -1487,10 +1407,7 @@ const MatchesScreen = ({
   // jugador nunca eligió — hay que bloquear explícitamente, no confiar en el
   // fallback silencioso del helper.
   const selectedCourseReady = Boolean(draft.course) && hasVerifiedScorecard(selectedCourse, Number(draft.holes));
-  const draftIsTeamMatch = draft.format === "2v2";
-  const teamSelectionIds = [draft.teammateId, draft.rivalId, draft.rival2Id].filter(Boolean);
-  const teamSelectionReady = teamSelectionIds.length === 3 && new Set(teamSelectionIds).size === 3;
-  const canContinueToCards = selectedCourseReady && (draftIsTeamMatch ? teamSelectionReady : Boolean(selectedRival));
+  const canContinueToCards = selectedCourseReady && Boolean(selectedRival);
 
   const startCreate = () => {
     setView("create");
@@ -1505,45 +1422,6 @@ const MatchesScreen = ({
     if (!draft.course) return; // ver nota en selectedCourseReady — no confiar en el fallback silencioso
     const course = getCourseById(draft.course);
     if (!hasVerifiedScorecard(course, Number(draft.holes))) return;
-
-    // 2vs2 sigue local-only con FAKE_RIVALS — fuera de alcance de PR1, ya
-    // deshabilitado en el selector de formato, nunca se llega aquí en la práctica.
-    if (draftIsTeamMatch) {
-      if (!teamSelectionReady) return;
-      const rival = FAKE_RIVALS.find((r) => r.id === draft.rivalId);
-      const rival2 = FAKE_RIVALS.find((r) => r.id === draft.rival2Id);
-      const players = buildTeamPlayers(profile, ranking, draft);
-      const teamA = players.filter((p) => p.team === "A");
-      const teamB = players.filter((p) => p.team === "B");
-      onCreateMatch({
-        id: "m_" + Date.now(),
-        matchType: "2v2",
-        format: "2 vs 2",
-        holes: Number(draft.holes),
-        courseId: course.id,
-        course: course.name,
-        date: new Date().toISOString(),
-        playerHcp: normalizeHcp(profile?.hcp),
-        playerBirdixHcp: getProfileBirdixHcp(profile),
-        rivalId: rival?.id,
-        rivalName: teamB.map((p) => p.name).join(" / "),
-        rivalHcp: rival?.hcp,
-        rivalBirdixHcp: getRivalBirdixHcp(rival),
-        rivalRank: averageRank(teamB),
-        teammateId: draft.teammateId,
-        rival2Id: rival2?.id,
-        teams: {
-          A: { name: "Tu equipo", playerIds: teamA.map((p) => p.id) },
-          B: { name: "Equipo rival", playerIds: teamB.map((p) => p.id) },
-        },
-        players,
-        status: "pending",
-        selectedCards: cardPicks,
-      });
-      onSelectCards(cardPicks);
-      setView("list");
-      return;
-    }
 
     if (!selectedRival) return;
     setCreating(true);
@@ -1589,41 +1467,6 @@ const MatchesScreen = ({
       return [...curr, cardId];
     });
   };
-
-  const renderPlayerPicker = (label, keyName) => (
-    <div>
-      <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2.5">{label}</span>
-      <div className="space-y-2.5">
-        {FAKE_RIVALS.map((r) => {
-          const active = draft[keyName] === r.id;
-          const disabled = draftIsTeamMatch && !active && [draft.teammateId, draft.rivalId, draft.rival2Id].includes(r.id);
-          return (
-            <button
-              key={r.id}
-              disabled={disabled}
-              onClick={() => setDraft({ ...draft, [keyName]: r.id })}
-              className={`w-full flex items-center gap-3 p-3 rounded-[24px] ring-1 transition-all duration-200 active:scale-[0.99] ${active
-                ? "ring-[#00703a]/40 ring-2 bg-[#E6F4ED] shadow-[0_12px_28px_rgba(1,79,42,0.10)]"
-                : disabled
-                  ? "ring-slate-100 bg-slate-50 opacity-45 cursor-not-allowed"
-                  : "ring-black/5 bg-white hover:ring-[#00703a]/20 hover:shadow-sm"
-                }`}
-            >
-              <Avatar initials={r.avatar} size="md" tone={active ? "emerald" : "slate"} />
-              <div className="text-left flex-1">
-                <p className="font-black text-slate-950 text-[14px] leading-tight">{r.name}</p>
-                <p className="text-[12px] text-slate-500">Birdix HCP {formatBirdixHcp(getRivalBirdixHcp(r))} · {r.club}</p>
-              </div>
-              <div className="text-right">
-                <DivisionBadge points={r.rank} compact />
-                <p className="text-[11px] text-slate-500 mt-1 font-semibold">{r.rank} pts</p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
 
   const renderRivalSearch = () => (
     <div>
@@ -1700,23 +1543,11 @@ const MatchesScreen = ({
                 </span>
               </div>
               <h3 className="font-black text-slate-900 text-lg mt-2">
-                {isTeamMatch(activeMatch) ? (
-                  "Tu equipo vs Equipo rival"
-                ) : (
-                  <>
-                    vs {activeMatch.rivalName || "Rival"}
-                    {activeMatch.rivalId && <span className="text-slate-400 font-bold"> {shortPlayerCode(activeMatch.rivalId)}</span>}
-                  </>
-                )}
+                vs {activeMatch.rivalName || "Rival"}
+                {activeMatch.rivalId && <span className="text-slate-400 font-bold"> {shortPlayerCode(activeMatch.rivalId)}</span>}
               </h3>
               <p className="text-[13px] text-slate-500">{activeMatch.format || "1 vs 1"} · {getMatchHoleCount(activeMatch)} hoyos · {activeMatch.course || "Campo sin definir"}</p>
-              {isTeamMatch(activeMatch) ? (
-                <p className="text-[12px] text-slate-500 mt-1">
-                  {(activeMatch.players || []).filter((p) => p.team === "A").map((p) => p.name).join(" + ")} · vs · {(activeMatch.players || []).filter((p) => p.team === "B").map((p) => p.name).join(" + ")}
-                </p>
-              ) : (
-                <p className="text-[12px] text-slate-500 mt-1">Birdix HCP {formatBirdixHcp(activeMatch.playerBirdixHcp ?? profile?.birdixHcp ?? profile?.hcp)} · Rival {formatBirdixHcp(activeMatch.rivalBirdixHcp ?? activeMatch.rivalHcp)}</p>
-              )}
+              <p className="text-[12px] text-slate-500 mt-1">Birdix HCP {formatBirdixHcp(activeMatch.playerBirdixHcp ?? profile?.birdixHcp ?? profile?.hcp)} · Rival {formatBirdixHcp(activeMatch.rivalBirdixHcp ?? activeMatch.rivalHcp)}</p>
               <div className="mt-3 flex items-center gap-1.5">
                 {selectedCardIds.map((id) => {
                   const c = CARDS.find((x) => x.id === id);
@@ -1757,14 +1588,6 @@ const MatchesScreen = ({
 
         <Card className="p-5 space-y-5 rounded-[30px] ring-black/5 shadow-[0_20px_55px_rgba(1,79,42,0.08)]">
           <div>
-            <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Formato</span>
-            <SegmentedControl
-              options={[{ value: "1v1", label: "1 vs 1" }, { value: "2v2", label: "2 vs 2", disabled: true }]}
-              value={draft.format}
-              onChange={(v) => setDraft({ ...draft, format: v })}
-            />
-          </div>
-          <div>
             <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 mb-2">Duración</span>
             <SegmentedControl
               options={[{ value: "9", label: "9 hoyos" }, { value: "18", label: "18 hoyos" }]}
@@ -1799,22 +1622,7 @@ const MatchesScreen = ({
         </Card>
 
         <Card className="p-5 space-y-5 rounded-[30px] ring-black/5 shadow-sm">
-          {draftIsTeamMatch ? (
-            <>
-              <div className="rounded-[24px] bg-[#E6F4ED] ring-1 ring-[#00703a]/10 px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-[#014F2A] font-black">Equipo A</p>
-                <p className="text-[13px] text-[#014F2A] font-bold mt-0.5">Tú + compañero seleccionado</p>
-              </div>
-              {renderPlayerPicker("Compañero", "teammateId")}
-              {renderPlayerPicker("Rival 1", "rivalId")}
-              {renderPlayerPicker("Rival 2", "rival2Id")}
-              {!teamSelectionReady && (
-                <p className="text-[12px] text-[#A8543F] font-semibold">Elige tres jugadores distintos para crear la partida 2 vs 2.</p>
-              )}
-            </>
-          ) : (
-            renderRivalSearch()
-          )}
+          {renderRivalSearch()}
         </Card>
 
         <button
@@ -2316,7 +2124,7 @@ const ProfileScreen = ({ profile, userId, matches, ranking, onLogout }) => {
           <div className="mt-4 grid grid-cols-2 gap-2 text-[13px]">
             <div className="bg-slate-50 rounded-2xl p-3">
               <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Formato favorito</p>
-              <p className="font-bold text-slate-900 mt-0.5">{profile?.format === "2v2" ? "2 vs 2" : "1 vs 1"}</p>
+              <p className="font-bold text-slate-900 mt-0.5">1 vs 1</p>
             </div>
             <div className="bg-slate-50 rounded-2xl p-3">
               <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Mejor racha</p>
@@ -2394,477 +2202,6 @@ const ScoreInput = ({ label, value, onChange, min = 1, max = 12, tone = "default
           <Plus size={primary ? 16 : 14} strokeWidth={3} />
         </button>
       </div>
-    </div>
-  );
-};
-
-const TeamStablefordScreen = ({ match, selectedCards, ranking, playerBirdixHcp, onFinish, onCancel }) => {
-  const total = getMatchHoleCount(match);
-  const matchCourse = getCourseById(match?.courseId || match?.course, null);
-  const courseReady = hasVerifiedScorecard(matchCourse, total);
-  const courseHoles = courseReady ? getCourseHoles(matchCourse.id, total) : [];
-  const selectedCardIds = Array.isArray(selectedCards) ? selectedCards : [];
-  const players = useMemo(() => getTeamPlayers(match, ranking, playerBirdixHcp), [match, ranking, playerBirdixHcp]);
-  const teamA = useMemo(() => players.filter((p) => p.team === "A"), [players]);
-  const teamB = useMemo(() => players.filter((p) => p.team === "B"), [players]);
-  const currentUser = players.find((p) => p.isCurrentUser) || teamA[0];
-  const defaultTargetId = teamB[0]?.id || "";
-  const [hole, setHole] = useState(0);
-  const [holes, setHoles] = useState(() =>
-    courseReady
-      ? Array.from({ length: total }, (_, i) => {
-        const courseHole = courseHoles[i];
-        return {
-          par: courseHole.par,
-          strokeIndex: courseHole.strokeIndex,
-          meters: courseHole.meters,
-          scores: Object.fromEntries(players.map((p) => [p.id, ""])),
-          cardId: null,
-          cardTargetId: defaultTargetId,
-          penalty: false,
-        };
-      })
-      : []
-  );
-  const [showCardPicker, setShowCardPicker] = useState(false);
-  const [isFinishing, setIsFinishing] = useState(false);
-
-  useEffect(() => {
-    setHole((h) => clampNumber(h, 0, total - 1, 0));
-  }, [total]);
-
-  const usedCardIds = holes.map((h, i) => (i === hole ? null : h.cardId)).filter(Boolean);
-
-  const computed = useMemo(() => {
-    const runningByPlayer = Object.fromEntries(players.map((p) => [p.id, 0]));
-    const baselineHcp = players.length ? Math.min(...players.map((p) => normalizeBirdixHcp(p.birdixHcp))) : 0;
-    let runningTeamA = 0;
-    let runningTeamB = 0;
-
-    return holes.map((h, i) => {
-      const par = clampNumber(h.par, 3, 6, 4);
-      const strokeIndex = clampNumber(h.strokeIndex, 1, 18, (courseHoles[i] || {}).strokeIndex || i + 1);
-      const scores = {};
-
-      players.forEach((p) => {
-        const raw = h.scores?.[p.id];
-        const hasScore = hasStrokeInput(raw);
-        const strokes = hasScore ? clampNumber(raw, 1, 12, par) : null;
-        const hcpStroke = strokesForIndex(Math.max(0, normalizeBirdixHcp(p.birdixHcp) - baselineHcp), strokeIndex);
-        const net = hasScore ? strokes - hcpStroke : null;
-        const netDiff = hasScore ? net - par : null;
-        const base = hasScore ? calculateStablefordPoints(net, par) : 0;
-        scores[p.id] = { ...p, hasScore, strokes, hcpStroke, net, netDiff, base, delta: 0, points: base };
-      });
-
-      const card = h.cardId ? CARDS.find((c) => c.id === h.cardId) : null;
-      const self = scores[currentUser?.id];
-      const target = scores[h.cardTargetId] || scores[defaultTargetId];
-      let note = null;
-
-      if (card && self) {
-        if (!self.hasScore) {
-          note = `${card.name}: introduce tus golpes`;
-        } else {
-          switch (card.id) {
-            case "double":
-              self.delta += self.base > 0 ? self.base : 0;
-              note = self.base > 0 ? "Todo o Nada: tus puntos x2" : "Todo o Nada: sin puntos que duplicar";
-              break;
-            case "steal":
-              if (target?.hasScore && self.base > target.base) {
-                self.delta += 1;
-                target.delta -= 1;
-                note = `Roba Punto: +1 / ${target.name} -1`;
-              } else {
-                note = "Roba Punto: no activa";
-              }
-              break;
-            case "safe-hole":
-              self.delta += self.base === 0 ? 1 : 0;
-              note = self.base === 0 ? "Hoyo Seguro: +1" : "Hoyo Seguro: ya sumas";
-              break;
-            case "birdix-prize":
-              if (self.netDiff <= -2) {
-                self.delta += 3;
-                note = "Premio Birdix: +3";
-              } else if (self.netDiff === -1) {
-                self.delta += 2;
-                note = "Premio Birdix: +2";
-              } else {
-                note = "Premio Birdix: sin birdie neto";
-              }
-              break;
-            case "comeback":
-              if (target?.hasScore && runningTeamA < runningTeamB && self.base > target.base) {
-                self.delta += 2;
-                note = "Remontada: +2";
-              } else {
-                note = "Remontada: no activa";
-              }
-              break;
-            case "no-driver":
-            case "no-club":
-            case "block":
-              note = target ? `${card.name}: objetivo ${target.name}` : `${card.name}: sin objetivo`;
-              break;
-            default:
-              note = `${card.name}: sin efecto de puntos`;
-          }
-        }
-      }
-
-      players.forEach((p) => {
-        scores[p.id].points = Math.max(0, scores[p.id].base + scores[p.id].delta);
-        runningByPlayer[p.id] += scores[p.id].points;
-      });
-
-      const teamAHole = teamA.reduce((sum, p) => sum + (scores[p.id]?.points || 0), 0);
-      const teamBHole = teamB.reduce((sum, p) => sum + (scores[p.id]?.points || 0), 0);
-      runningTeamA += teamAHole;
-      runningTeamB += teamBHole;
-
-      return {
-        par,
-        strokeIndex,
-        scores,
-        note,
-        teamAHole,
-        teamBHole,
-        runningTeamA,
-        runningTeamB,
-        runningByPlayer: { ...runningByPlayer },
-      };
-    });
-  }, [holes, players, teamA, teamB, courseHoles, currentUser?.id, defaultTargetId]);
-
-  const final = computed[computed.length - 1];
-  const teamATotal = final?.runningTeamA || 0;
-  const teamBTotal = final?.runningTeamB || 0;
-
-  if (!courseReady) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
-        <header className="px-5 pt-5 pb-3 max-w-[900px] mx-auto w-full">
-          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 flex items-center justify-center">
-            <X size={18} />
-          </button>
-        </header>
-        <div className="px-5 flex-1 max-w-[900px] mx-auto w-full flex items-center">
-          <Card className="p-5 w-full">
-            <EmptyState
-              icon={Flag}
-              title="Tarjeta oficial pendiente"
-              description={`${matchCourse?.name || match?.course || "Este campo"} estará disponible cuando tengamos par e índice de dificultad verificados.`}
-              action={<SecondaryButton onClick={onCancel}>Volver a partidas</SecondaryButton>}
-            />
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  const current = holes[hole] || holes[0] || { par: 4, strokeIndex: 1, scores: {}, cardId: null, cardTargetId: defaultTargetId, penalty: false };
-  const cur = computed[hole] || computed[0] || { par: 4, strokeIndex: 1, scores: {}, teamAHole: 0, teamBHole: 0, runningTeamA: 0, runningTeamB: 0, runningByPlayer: {}, note: null };
-
-  const updateHole = (patch) => {
-    setHoles((arr) =>
-      arr.map((h, i) => {
-        if (i !== hole) return h;
-        const next = { ...h, ...patch };
-        const par = clampNumber(next.par, 3, 6, 4);
-        const scores = Object.fromEntries(
-          players.map((p) => {
-            const value = next.scores?.[p.id] ?? "";
-            return [p.id, value === "" ? "" : clampNumber(value, 1, 12, par)];
-          })
-        );
-        return { ...next, par, scores };
-      })
-    );
-  };
-
-  const updatePlayerScore = (playerId, value) => {
-    updateHole({ scores: { ...(current.scores || {}), [playerId]: value } });
-  };
-
-  const finish = () => {
-    if (isFinishing) return;
-    setIsFinishing(true);
-    const result = calculateMatchWinner(teamATotal, teamBTotal);
-    const teamBResult = oppositeResult(result);
-    const teamAAvg = averageRank(teamA);
-    const teamBAvg = averageRank(teamB);
-    const teamADelta = calculateEloDelta(teamAAvg, teamBAvg, result);
-    const teamBDelta = calculateEloDelta(teamBAvg, teamAAvg, teamBResult);
-    const rankedPlayers = players.map((p) => {
-      const playerResult = p.team === "A" ? result : teamBResult;
-      const delta = p.team === "A" ? teamADelta : teamBDelta;
-      return {
-        ...p,
-        totalPoints: final?.runningByPlayer?.[p.id] || 0,
-        result: playerResult,
-        recordDelta: {
-          wins: playerResult === "win" ? 1 : 0,
-          losses: playerResult === "loss" ? 1 : 0,
-          draws: playerResult === "draw" ? 1 : 0,
-        },
-        rankingDelta: delta,
-        rankAfter: toRankingPoints(p.rank + delta),
-        streakAfter: playerResult === "win" ? 1 : 0,
-      };
-    });
-    const finalMatch = {
-      ...match,
-      id: match?.id || "m_" + Date.now(),
-      matchType: "2v2",
-      format: "2 vs 2",
-      holes: total,
-      course: match?.course || "Campo sin definir",
-      date: match?.date || new Date().toISOString(),
-      status: "finished",
-      result,
-      rivalName: teamB.map((p) => p.name).join(" / ") || "Equipo rival",
-      playerPoints: teamATotal,
-      rivalPoints: teamBTotal,
-      teamPoints: { A: teamATotal, B: teamBTotal },
-      teamRankingDelta: { A: teamADelta, B: teamBDelta },
-      players: rankedPlayers,
-      cardsUsed: holes.map((h) => h.cardId).filter(Boolean),
-      rankingDelta: teamADelta,
-      holeScores: holes.map((h, i) => ({ ...h, ...(computed[i] || {}) })),
-      finishedAt: new Date().toISOString(),
-    };
-    onFinish(finalMatch, teamADelta);
-  };
-
-  const selectedCard = current.cardId ? CARDS.find((c) => c.id === current.cardId) : null;
-  const SelectedCardIcon = selectedCard?.icon;
-
-  return (
-    <div className="min-h-screen bg-[#F7FAF7] flex flex-col">
-      <header className="px-5 pt-5 pb-4 max-w-[900px] mx-auto w-full sticky top-0 z-20 bg-[#F7FAF7]/95 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <button onClick={onCancel} className="h-10 w-10 rounded-full bg-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center active:scale-95 transition">
-            <X size={18} />
-          </button>
-          <div className="text-center">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-[#00703a] font-black">Partida 2 vs 2</p>
-            <p className="font-black text-slate-950 text-[17px] leading-tight mt-0.5">Tu equipo vs Equipo rival</p>
-            <p className="text-[11px] text-slate-500 font-semibold mt-0.5">Stableford · Birdix HCP</p>
-          </div>
-          <div className="h-10 w-10" />
-        </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 items-stretch">
-          <div className="bg-white rounded-[22px] ring-1 ring-[#00703a]/15 shadow-sm p-3 text-center">
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Equipo A</p>
-            <p className="font-black text-[#00703a] text-2xl leading-none mt-1">{teamATotal}</p>
-            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
-            <p className="text-[10px] text-slate-500 font-semibold mt-1 truncate">{teamA.map((p) => p.name.split(" ")[0]).join(" + ")}</p>
-          </div>
-          <div className="text-center rounded-[22px] bg-slate-950 text-white px-2.5 py-3 shadow-md shadow-slate-900/10">
-            <p className="text-[10px] uppercase tracking-wider text-white/55 font-semibold">Hoyo</p>
-            <p className="font-black text-2xl leading-none mt-1">{hole + 1}<span className="text-sm text-white/45">/{total}</span></p>
-            <p className="text-[10px] text-[#6EE7B7] font-bold mt-1">Index {cur.strokeIndex}</p>
-          </div>
-          <div className="bg-white rounded-[22px] ring-1 ring-[#A8543F]/15 shadow-sm p-3 text-center">
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Equipo B</p>
-            <p className="font-black text-[#A8543F] text-2xl leading-none mt-1">{teamBTotal}</p>
-            <p className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mt-1">pts</p>
-            <p className="text-[10px] text-slate-500 font-semibold mt-1 truncate">{teamB.map((p) => p.name.split(" ")[0]).join(" + ")}</p>
-          </div>
-        </div>
-      </header>
-
-      <div className="px-5 flex-1 max-w-[900px] mx-auto w-full space-y-4 pb-32">
-        <Card className="p-5 space-y-4 ring-slate-200 shadow-surface">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Tarjeta del hoyo {hole + 1}</span>
-            <div className="flex items-center gap-1.5">
-              <Pill tone="slate" icon={Flag}>Par {current.par}</Pill>
-              <Pill tone="slate">Index {cur.strokeIndex}</Pill>
-            </div>
-          </div>
-
-          <ScoreInput label="Par" value={current.par} onChange={(v) => updateHole({ par: v })} min={3} max={6} />
-
-          <div className="grid grid-cols-1 gap-2">
-            {players.map((p) => {
-              const score = cur.scores?.[p.id] || {};
-              return (
-                <div key={p.id} className={`rounded-[22px] p-3 ring-1 ${p.team === "A" ? "bg-[#E6F4ED]/80 ring-[#00703a]/10" : "bg-[#FBEAE3]/70 ring-[#A8543F]/10"}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <p className="text-[14px] font-black text-slate-950 leading-tight">{p.name}</p>
-                      <p className="text-[11px] text-slate-500 font-semibold">B-HCP {formatBirdixHcp(p.birdixHcp)}</p>
-                    </div>
-                    <Pill tone={score.hcpStroke > 0 ? "emerald" : "slate"}>{score.hcpStroke > 0 ? `Recibe +${score.hcpStroke}` : "Sin golpe"}</Pill>
-                  </div>
-                  <ScoreInput label="Golpes" value={current.scores?.[p.id] ?? ""} onChange={(v) => updatePlayerScore(p.id, v)} />
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={() => updateHole({ penalty: !current.penalty })}
-            aria-label="Alternar penalización"
-            title="Alternar penalización"
-            className={`w-full flex items-center justify-end rounded-2xl px-3 py-2.5 ring-1 transition ${current.penalty ? "bg-[#FBEAE3] ring-[#D67560]/30" : "bg-slate-50 ring-slate-100"
-              }`}
-          >
-            <span className={`h-5 w-9 rounded-full flex items-center transition ${current.penalty ? "bg-[#D67560] justify-end" : "bg-slate-300 justify-start"} p-0.5`}>
-              <span className="h-4 w-4 rounded-full bg-white" />
-            </span>
-          </button>
-        </Card>
-
-        <Card className="p-5 ring-slate-200 shadow-surface">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-black">Carta del hoyo</span>
-            <button onClick={() => setShowCardPicker(true)} className="rounded-full bg-[#E6F4ED] px-3 py-1.5 text-[#00703a] text-[12px] font-black active:scale-95 transition">{current.cardId ? "Cambiar" : "Elegir"}</button>
-          </div>
-          {selectedCard ? (
-            <div className={`mt-3 ${selectedCard.accent} rounded-[22px] p-3.5 ring-1 ring-black/5`}>
-              <div className="flex items-center gap-3">
-                <div className="h-11 w-11 rounded-2xl bg-white/75 flex items-center justify-center shadow-sm">{SelectedCardIcon && <SelectedCardIcon size={18} strokeWidth={2.5} />}</div>
-                <div className="flex-1">
-                  <p className="font-black text-[15px] leading-tight">{selectedCard.name}</p>
-                  <p className="text-[11px] opacity-80">{selectedCard.short}</p>
-                </div>
-                <button onClick={() => updateHole({ cardId: null, cardTargetId: defaultTargetId })} className="h-8 w-8 rounded-full bg-white/80 shadow-sm flex items-center justify-center active:scale-95 transition"><X size={14} /></button>
-              </div>
-              {cardNeedsTarget(selectedCard.id) && (
-                <label className="block mt-3">
-                  <span className="block text-[10px] uppercase tracking-wider font-bold opacity-70 mb-1">Objetivo</span>
-                  <select
-                    value={current.cardTargetId || defaultTargetId}
-                    onChange={(e) => updateHole({ cardTargetId: e.target.value })}
-                    className="w-full rounded-xl bg-white/80 px-3 py-2 text-[13px] font-bold outline-none"
-                  >
-                    {teamB.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                </label>
-              )}
-            </div>
-          ) : (
-            <button onClick={() => setShowCardPicker(true)} className="mt-3 w-full rounded-[22px] bg-slate-50 ring-1 ring-slate-100 px-4 py-4 text-left active:scale-[0.99] transition">
-              <p className="text-[13px] font-black text-slate-900">Sin carta seleccionada</p>
-              <p className="text-[12px] text-slate-500 mt-0.5">Disponibles: {Math.max(0, selectedCardIds.length - usedCardIds.length)}</p>
-            </button>
-          )}
-        </Card>
-
-        <Card className="p-5 bg-slate-950 text-white ring-slate-900 shadow-lg shadow-slate-900/10">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.16em] text-[#6EE7B7] font-black">Stableford equipos</span>
-            <Info size={14} className="opacity-50" />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            {[{ label: "Equipo A", players: teamA, total: cur.runningTeamA, tone: "text-[#6EE7B7]" }, { label: "Equipo B", players: teamB, total: cur.runningTeamB, tone: "text-[#F4B2A6]" }].map((team) => (
-              <div key={team.label} className="rounded-2xl bg-white/[0.06] px-3 py-3 ring-1 ring-white/10">
-                <p className={`text-[11px] uppercase tracking-wider font-semibold ${team.tone}`}>{team.label}</p>
-                <p className="font-black text-4xl leading-none mt-1">{team.total}</p>
-                <div className="mt-2 space-y-1.5">
-                  {team.players.map((p) => {
-                    const s = cur.scores?.[p.id] || {};
-                    return (
-                      <div key={p.id} className="text-[11px] text-white/65">
-                        <span className="font-bold text-white/85">{p.name.split(" ")[0]}</span> · {s.hasScore ? `${s.points} pts · gross ${s.strokes} · net ${s.net}` : "sin golpes"}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 rounded-2xl bg-white/[0.06] px-3 py-2 text-[12px] text-white/75 font-bold">
-            Hoyo: {cur.teamAHole} - {cur.teamBHole}
-          </div>
-          {cur?.note && (
-            <div className="mt-3 rounded-2xl bg-[#00703a]/20 px-3 py-2 text-[12px] text-[#6EE7B7] font-bold flex items-center gap-1.5">
-              <Sparkles size={12} /> {cur.note}
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-3 ring-slate-200 shadow-surface">
-          <div className="grid grid-cols-9 gap-1 text-center">
-            {holes.slice(0, Math.min(9, total)).map((h, i) => (
-              <button key={i} onClick={() => setHole(i)} className={`rounded-xl py-1.5 transition active:scale-95 ${i === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}>
-                <p className="text-[10px] font-bold">Hoyo</p>
-                <p className="text-[13px] font-black">{i + 1}</p>
-              </button>
-            ))}
-          </div>
-          {total > 9 && (
-            <div className="grid grid-cols-9 gap-1 text-center mt-1">
-              {holes.slice(9).map((h, i) => (
-                <button key={i + 9} onClick={() => setHole(i + 9)} className={`rounded-xl py-1.5 transition active:scale-95 ${i + 9 === hole ? "bg-[#00703a] text-white shadow-sm" : "bg-slate-100 text-slate-700"}`}>
-                  <p className="text-[10px] font-bold">Hoyo</p>
-                  <p className="text-[13px] font-black">{i + 10}</p>
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-xl ring-1 ring-slate-100 z-30 shadow-[0_-12px_30px_rgba(15,23,42,0.08)]">
-        <div className="max-w-[900px] mx-auto px-5 py-3 flex items-center gap-2">
-          <button onClick={() => setHole(Math.max(0, hole - 1))} disabled={hole === 0} className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center disabled:opacity-30 active:scale-95 transition">
-            <ChevronLeft size={20} />
-          </button>
-          {hole < total - 1 ? (
-            <PrimaryButton onClick={() => setHole(hole + 1)} icon={ArrowRight}>Siguiente hoyo</PrimaryButton>
-          ) : (
-            <PrimaryButton onClick={finish} icon={Trophy} tone="dark" disabled={isFinishing}>
-              {isFinishing ? "Guardando…" : "Finalizar partida"}
-            </PrimaryButton>
-          )}
-        </div>
-      </div>
-
-      {showCardPicker && (
-        <div className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-end justify-center p-3" onClick={() => setShowCardPicker(false)}>
-          <div className="bg-white rounded-3xl w-full max-w-[420px] p-4 ring-1 ring-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-black text-slate-900 text-lg">Usar carta en hoyo {hole + 1}</h3>
-              <button onClick={() => setShowCardPicker(false)} className="h-9 w-9 rounded-full bg-slate-100 flex items-center justify-center"><X size={18} /></button>
-            </div>
-            <p className="text-[12px] text-slate-500 mb-3">Las cartas las juega el usuario actual. Las ofensivas pueden elegir rival.</p>
-            <div className="grid grid-cols-2 gap-3">
-              {selectedCardIds
-                .filter((id) => {
-                  const c = CARDS.find((x) => x.id === id);
-                  if (!c) return false;
-                  if (usedCardIds.includes(id) && current.cardId !== id) return true;
-                  const priorA = hole > 0 ? computed[hole - 1]?.runningTeamA || 0 : 0;
-                  const priorB = hole > 0 ? computed[hole - 1]?.runningTeamB || 0 : 0;
-                  return isCardPlayable(c, { isBehind: priorA < priorB });
-                })
-                .map((id) => {
-                const c = CARDS.find((x) => x.id === id);
-                if (!c) return null;
-                const used = usedCardIds.includes(id) && current.cardId !== id;
-                return (
-                  <BirdixCard
-                    key={id}
-                    card={c}
-                    selected={current.cardId === id}
-                    used={used}
-                    onClick={() => {
-                      updateHole({ cardId: id, cardTargetId: cardNeedsTarget(id) ? current.cardTargetId || defaultTargetId : defaultTargetId });
-                      setShowCardPicker(false);
-                    }}
-                    size="sm"
-                  />
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -4513,7 +3850,6 @@ export default function BirdixApp() {
       storage.set("profile", state.profile);
       storage.set("matches", state.matches);
       storage.set("ranking", state.ranking);
-      storage.set("position", state.position);
       storage.set("selectedCards", state.selectedCards);
       storage.set("activeMatch", state.activeMatch);
     } catch (e) { }
@@ -4589,7 +3925,7 @@ export default function BirdixApp() {
       storage.remove("profile");
       storage.remove("matches");
       storage.remove("ranking");
-      storage.remove("position");
+      storage.remove("position"); // clave heredada: el puesto simulado ya no existe, se limpia de los dispositivos que la tengan
       storage.remove("selectedCards");
       storage.remove("activeMatch");
     } catch (e) { }
@@ -4689,16 +4025,7 @@ export default function BirdixApp() {
   if (playing && state.activeMatch) {
     return (
       <>
-        {isTeamMatch(state.activeMatch) ? (
-          <TeamStablefordScreen
-            match={state.activeMatch}
-            selectedCards={state.selectedCards}
-            ranking={state.ranking}
-            playerBirdixHcp={state.profile?.birdixHcp ?? state.profile?.hcp}
-            onFinish={handleFinishMatch}
-            onCancel={() => setPlaying(false)}
-          />
-        ) : state.activeMatch.isRealMatch ? (
+        {state.activeMatch.isRealMatch ? (
           <RealMatchPlayScreen
             match={state.activeMatch}
             userId={state.user?.id}
@@ -4781,7 +4108,6 @@ export default function BirdixApp() {
             selectedCards={state.selectedCards}
             profile={state.profile}
             userId={state.user?.id}
-            ranking={state.ranking}
             onCreateMatch={handleCreateMatch}
             onSelectCards={(cards) => dispatch({ type: "SET_SELECTED_CARDS", payload: cards })}
             onOpenActive={() => {
