@@ -61,6 +61,7 @@ import {
   getMatchPlayersStatus,
 } from "./lib/api/matches";
 import { listCourses } from "./lib/api/courses";
+import { listRankedPlayers, getMyRankingPosition } from "./lib/api/profiles";
 import { queueMatchHoleWrite, mergeHydratedHoles } from "./lib/matchSync";
 import { useMatchRealtime } from "./hooks/useMatchRealtime";
 
@@ -231,6 +232,30 @@ const getNextDivision = (points) => {
   return i >= 0 && i < DIVISIONS.length - 1 ? DIVISIONS[i + 1] : null;
 };
 
+/** Iniciales para el Avatar a partir de un nombre completo. Tolera nulos y nombres de una palabra. */
+const initialsOf = (name) =>
+  (name || "?")
+    .trim()
+    .split(/\s+/)
+    .map((x) => x[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+/**
+ * Columnas de `profiles` que lee la app para su propio perfil. Lista explícita
+ * a propósito, nunca `select("*")` — T5 del plan (PLAN-EMBUDO.md) revoca el
+ * SELECT de tabla y concede permisos por columna sin `email`, así que un
+ * `select("*")` se expandiría a `email` y la petición fallaría entera con
+ * 42501. El correo del usuario sale de Auth (`session.user.email`), no de esta
+ * tabla.
+ *
+ * Al añadir una columna a `profiles` hay que añadirla en DOS sitios: al GRANT
+ * de la migración y a esta lista. Si falta el GRANT, 42501; si falta aquí, la
+ * columna llega como `undefined`.
+ */
+const PROFILE_COLUMNS = "id, full_name, birdix_hcp, points";
+
 const FAKE_RIVALS = [
   { id: "r1", name: "Carlos Mendoza", hcp: 9, birdixHcp: 9, club: "Real Club La Moraleja", rank: 1342, division: "platino", avatar: "CM" },
   { id: "r2", name: "Marta Riera", hcp: 14, birdixHcp: 14, club: "Sotogrande", rank: 1180, division: "platino", avatar: "MR" },
@@ -238,14 +263,6 @@ const FAKE_RIVALS = [
   { id: "r4", name: "Laura Pinto", hcp: 22, birdixHcp: 22, club: "El Saler", rank: 640, division: "plata", avatar: "LP" },
   { id: "r5", name: "Iván Castro", hcp: 11, birdixHcp: 11, club: "PGA Catalunya", rank: 980, division: "oro", avatar: "IC" },
   { id: "r6", name: "Nuria Almansa", hcp: 17, birdixHcp: 17, club: "La Reserva", rank: 720, division: "plata", avatar: "NA" },
-];
-
-const FAKE_TOP = [
-  { name: "Diego Vela", points: 2140, change: 1 },
-  { name: "Andrea Sanz", points: 2080, change: -1 },
-  { name: "Pablo Reyes", points: 2010, change: 2 },
-  { name: "Carla Estévez", points: 1955, change: 0 },
-  { name: "Hugo Mateo", points: 1900, change: -2 },
 ];
 
 /* Espejo local de los 3 campos reales que ya existen en Supabase
@@ -512,7 +529,9 @@ const initialState = {
   profile: null, // perfil deportivo
   matches: [], // historial
   ranking: 1000, // puntos del jugador
-  position: 4287, // posición global simulada
+  topPlayers: [], // top real de la clasificación (vacío hasta que alguien juegue)
+  myPosition: null, // puesto real, o null si todavía no estoy en la clasificación
+  rankingLoaded: false, // false = aún no ha respondido el servidor (no es lo mismo que vacío)
   selectedCards: [], // cartas elegidas partida activa
   activeMatch: null, // partida activa
   hydrated: false,
@@ -542,6 +561,15 @@ function reducer(state, action) {
     // pintó rápido con lo que hubiera en localStorage; esto lo corrige con
     // los datos reales en cuanto llegan, sin pisar campos locales que no
     // vienen de Supabase (ver comentario junto al useEffect de hidratación).
+    case "REFRESH_RANKING": {
+      const { topPlayers, myPosition } = action.payload || {};
+      return {
+        ...state,
+        topPlayers: Array.isArray(topPlayers) ? topPlayers : state.topPlayers,
+        myPosition: Number.isFinite(Number(myPosition)) ? Number(myPosition) : null,
+        rankingLoaded: true,
+      };
+    }
     case "REFRESH_FROM_SERVER": {
       const { profile, ranking, matches } = action.payload || {};
       return {
@@ -561,11 +589,9 @@ function reducer(state, action) {
       const safeDelta = Math.round(Number.isFinite(Number(rankingDelta)) ? Number(rankingDelta) : 0);
       const finishedMatch = normalizeFinishedMatch(match, safeDelta);
       const safeRanking = Number.isFinite(Number(state.ranking)) ? Number(state.ranking) : 1000;
-      const safePosition = Number.isFinite(Number(state.position)) ? Number(state.position) : 4287;
       const safeMatches = Array.isArray(state.matches) ? state.matches : [];
       const nextMatches = [finishedMatch, ...safeMatches];
       const newRanking = toRankingPoints(safeRanking + safeDelta);
-      const posDelta = -Math.round(safeDelta * 3.2);
       // D20: en partida real, el hcp local nunca se adelanta al servidor —
       // solo se toca si confirmMatchResult ya trajo el valor confirmado
       // (ambos jugadores cerraron su lado). Sin eso, se deja tal cual hasta
@@ -585,7 +611,8 @@ function reducer(state, action) {
         profile: nextProfile,
         matches: nextMatches,
         ranking: newRanking,
-        position: Math.max(1, safePosition + posDelta),
+        // El puesto ya no se simula con un delta local: lo recalcula el
+        // servidor y llega por REFRESH_RANKING en el próximo arranque.
         selectedCards: [],
         activeMatch: null,
       };
@@ -1170,7 +1197,6 @@ const OnboardingStepper = ({ user, onDone }) => {
       hcp: Number(data.hcp),
       birdixHcp: normalizeBirdixHcp(data.hcp),
       ranking: 1000,
-      position: 4287,
       stats: { wins: 0, losses: 0, draws: 0, streak: 0, totalMatches: 0, favCard: null, bestRank: 1000 },
     });
   };
@@ -2029,24 +2055,26 @@ const CardsScreen = ({ onBack }) => {
    12 · SCREEN · RANKING
    --------------------------------------------------------------------------*/
 
-const RankingScreen = ({ profile, ranking, position }) => {
+const RankingScreen = ({ profile, userId, ranking, topPlayers, myPosition, rankingLoaded }) => {
   const displayRanking = toRankingPoints(ranking);
   const division = getDivision(displayRanking);
   const nextDiv = getNextDivision(displayRanking);
   const progress = nextDiv ? ((displayRanking - division.min) / (nextDiv.min - division.min)) * 100 : 100;
-  const firstName = profile?.name?.split(" ")[0] || "Tú";
 
-  const playerEntry = { name: profile?.name || "Tú", points: displayRanking, change: 0, you: true };
-  const around = useMemo(() => {
-    const base = [
-      { name: "Sergio Lara", points: displayRanking + 80, change: 1 },
-      { name: "Eva Núñez", points: displayRanking + 35, change: -1 },
-      playerEntry,
-      { name: "Tomás Ruiz", points: Math.max(0, displayRanking - 22), change: 2 },
-      { name: "Clara Gil", points: Math.max(0, displayRanking - 60), change: -3 },
-    ];
-    return base.sort((a, b) => b.points - a.points);
-  }, [displayRanking, profile]);
+  // Un jugador entra en la clasificación cuando ha jugado una partida real
+  // (ver src/lib/api/profiles.js). Mientras nadie haya jugado, `topPlayers`
+  // llega vacío y `myPosition` es null: estado vacío, no "Puesto 1" para
+  // todos. A 5 nov 2026 los 5 jugadores están a 1000 puntos exactos, así que
+  // un puesto calculado solo por puntos los haría a todos primeros a la vez.
+  const inRanking = myPosition !== null && myPosition !== undefined;
+
+  // "Cerca de ti" solo aporta algo si yo NO salgo ya en el top de arriba.
+  // Con 5 jugadores el top 10 es todo el mundo y repetiría a los mismos.
+  const showNearby = inRanking && myPosition > topPlayers.length;
+  const nearby = useMemo(() => {
+    if (!showNearby) return [];
+    return topPlayers.slice(-2).concat([{ id: userId, full_name: profile?.name || "Tú", points: displayRanking, you: true }]);
+  }, [showNearby, topPlayers, userId, profile, displayRanking]);
 
   return (
     <div className="space-y-5">
@@ -2059,7 +2087,9 @@ const RankingScreen = ({ profile, ranking, position }) => {
               <Crown size={18} strokeWidth={2.5} />
               <span className="font-bold uppercase tracking-wider text-[12px]">División {division.name}</span>
             </div>
-            <span className="font-bold text-[12px]">#{position.toLocaleString("es-ES")}</span>
+            <span className="font-bold text-[12px]">
+              {inRanking ? `#${myPosition.toLocaleString("es-ES")}` : "Sin clasificar"}
+            </span>
           </div>
           <p className="font-display text-[48px] leading-none mt-5">{displayRanking}</p>
           <p className="text-[12px] font-semibold opacity-80 mt-1">puntos de ranking</p>
@@ -2110,46 +2140,70 @@ const RankingScreen = ({ profile, ranking, position }) => {
       <div>
         <SectionTitle>Top jugadores</SectionTitle>
         <Card className="overflow-hidden shadow-surface">
-          {FAKE_TOP.map((p, i) => (
-            <div key={p.name} className={`flex items-center gap-3 p-3.5 ${i < FAKE_TOP.length - 1 ? "border-b border-slate-100" : ""}`}>
-              <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] ${i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-100 text-slate-700" : i === 2 ? "bg-orange-100 text-orange-700" : "bg-slate-50 text-slate-500"}`}>
-                {i + 1}
-              </div>
-              <Avatar initials={p.name.split(" ").map((x) => x[0]).join("")} size="sm" tone={i === 0 ? "amber" : "slate"} />
-              <div className="flex-1">
-                <p className="font-bold text-slate-900 text-[14px]">{p.name}</p>
-                <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
-              </div>
-              <div className="text-right">
-                <p className="font-display text-[17px] text-slate-900">{p.points}</p>
-                <span className={`text-[11px] font-bold inline-flex items-center gap-0.5 ${p.change > 0 ? "text-[#00703a]" : p.change < 0 ? "text-[#A8543F]" : "text-slate-500"}`}>
-                  {p.change > 0 ? <TrendingUp size={11} /> : p.change < 0 ? <TrendingDown size={11} /> : <Minus size={11} />}
-                  {Math.abs(p.change)}
-                </span>
-              </div>
+          {!rankingLoaded ? (
+            <div className="p-6 text-center">
+              <p className="text-[13px] text-slate-400 font-semibold">Cargando clasificación…</p>
             </div>
-          ))}
+          ) : topPlayers.length === 0 ? (
+            <EmptyState
+              icon={Crown}
+              title="Aún no hay partidas jugadas"
+              description="Juega la primera y entra en la clasificación."
+            />
+          ) : (
+            topPlayers.map((p, i) => {
+              const isMe = p.id === userId;
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-center gap-3 p-3.5 ${isMe ? "bg-[#E6F4ED]" : ""} ${i < topPlayers.length - 1 ? "border-b border-slate-100" : ""}`}
+                >
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] ${i === 0 ? "bg-amber-100 text-amber-700" : i === 1 ? "bg-slate-100 text-slate-700" : i === 2 ? "bg-orange-100 text-orange-700" : "bg-slate-50 text-slate-500"}`}>
+                    {i + 1}
+                  </div>
+                  <Avatar initials={initialsOf(p.full_name)} size="sm" tone={i === 0 ? "amber" : isMe ? "emerald" : "slate"} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-bold text-[14px] truncate ${isMe ? "text-[#014F2A]" : "text-slate-900"}`}>
+                      {p.full_name}
+                      {isMe && " (tú)"}
+                      {p.tag ? <span className="text-slate-400 font-semibold">{` #${p.tag}`}</span> : null}
+                    </p>
+                    <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
+                  </div>
+                  <p className="font-display text-[17px] text-slate-900">{p.points}</p>
+                </div>
+              );
+            })
+          )}
         </Card>
       </div>
 
-      <div>
-        <SectionTitle>Cerca de ti</SectionTitle>
-        <Card className="overflow-hidden shadow-surface">
-          {around.map((p, i) => (
-            <div key={i} className={`flex items-center gap-3 p-3.5 ${p.you ? "bg-[#E6F4ED]" : ""} ${i < around.length - 1 ? "border-b border-slate-100" : ""}`}>
-              <div className="h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] bg-slate-50 text-slate-500">
-                {position + (i - 2)}
+      {showNearby && (
+        <div>
+          <SectionTitle>Cerca de ti</SectionTitle>
+          <Card className="overflow-hidden shadow-surface">
+            {nearby.map((p, i) => (
+              <div
+                key={p.id}
+                className={`flex items-center gap-3 p-3.5 ${p.you ? "bg-[#E6F4ED]" : ""} ${i < nearby.length - 1 ? "border-b border-slate-100" : ""}`}
+              >
+                <div className="h-8 w-8 rounded-full flex items-center justify-center font-black text-[12px] bg-slate-50 text-slate-500">
+                  {p.you ? myPosition : topPlayers.indexOf(p) + 1}
+                </div>
+                <Avatar initials={initialsOf(p.full_name)} size="sm" tone={p.you ? "emerald" : "slate"} />
+                <div className="flex-1 min-w-0">
+                  <p className={`font-bold text-[14px] truncate ${p.you ? "text-[#014F2A]" : "text-slate-900"}`}>
+                    {p.full_name}
+                    {p.you && " (tú)"}
+                  </p>
+                  <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
+                </div>
+                <p className="font-display text-[17px] text-slate-900">{p.points}</p>
               </div>
-              <Avatar initials={p.you ? firstName.charAt(0).toUpperCase() : p.name.split(" ").map((x) => x[0]).join("")} size="sm" tone={p.you ? "emerald" : "slate"} />
-              <div className="flex-1">
-                <p className={`font-bold text-[14px] ${p.you ? "text-[#014F2A]" : "text-slate-900"}`}>{p.you ? `${p.name} (tú)` : p.name}</p>
-                <p className="text-[11px] text-slate-500 font-semibold">{getDivision(p.points).name}</p>
-              </div>
-              <p className="font-display text-[17px] text-slate-900">{p.points}</p>
-            </div>
-          ))}
-        </Card>
-      </div>
+            ))}
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
@@ -4335,7 +4389,6 @@ export default function BirdixApp() {
         const profile = storage.get("profile");
         const matches = storage.get("matches") || [];
         const ranking = storage.get("ranking") ?? 1000;
-        const position = storage.get("position") ?? 4287;
         const selectedCards = storage.get("selectedCards") || [];
         const activeMatch = storage.get("activeMatch") || null;
 
@@ -4349,7 +4402,7 @@ export default function BirdixApp() {
 
         dispatch({
           type: "HYDRATE",
-          payload: { session, user, profile, matches, ranking, position, selectedCards, activeMatch },
+          payload: { session, user, profile, matches, ranking, selectedCards, activeMatch },
         });
 
         // D22: HYDRATE de arriba ya pintó rápido con lo último que hubiera
@@ -4360,7 +4413,7 @@ export default function BirdixApp() {
         // bloquear el primer pintado.
         if (authSession) {
           Promise.all([
-            supabase.from("profiles").select("*").eq("id", authSession.user.id).single(),
+            supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", authSession.user.id).single(),
             listMyMatchHistory(authSession.user.id),
           ])
             .then(([{ data: row }, history]) => {
@@ -4376,6 +4429,38 @@ export default function BirdixApp() {
             .catch(() => {
               // Sin cobertura al arrancar — se queda con la caché local; en
               // cuanto haya red, el próximo arranque se refresca solo.
+            });
+        }
+
+        // Clasificación real (PR-A, T3 ampliada): sustituye a FAKE_TOP, al
+        // array `around` inventado y al `position: 4287`. Va aparte del
+        // refresco de perfil porque su estado vacío es informativo por sí
+        // mismo: si nadie ha jugado, `topPlayers` llega vacío y `myPosition`
+        // null, y la pantalla lo dice en vez de regalar un "Puesto 1".
+        if (authSession) {
+          Promise.all([
+            listRankedPlayers(),
+            supabase
+              .from("profiles")
+              .select("points, real_matches_played, created_at")
+              .eq("id", authSession.user.id)
+              .single()
+              .then(({ data: me }) =>
+                me
+                  ? getMyRankingPosition({
+                      points: me.points,
+                      realMatchesPlayed: me.real_matches_played,
+                      createdAt: me.created_at,
+                    })
+                  : null
+              ),
+          ])
+            .then(([topPlayers, myPosition]) => {
+              dispatch({ type: "REFRESH_RANKING", payload: { topPlayers, myPosition } });
+            })
+            .catch(() => {
+              // Sin cobertura: la Clasificación se queda en "Cargando…" y se
+              // resuelve en el próximo arranque. No bloquea el resto.
             });
         }
 
@@ -4451,7 +4536,7 @@ export default function BirdixApp() {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message === "Invalid login credentials" ? "Email o contraseña incorrectos." : error.message };
 
-    const { data: row } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+    const { data: row } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", data.user.id).single();
     const user = { id: data.user.id, email: data.user.email, name: row?.full_name || email.split("@")[0] };
     const session = { userId: data.user.id, email: data.user.email, since: Date.now() };
     const profile = row
@@ -4706,7 +4791,14 @@ export default function BirdixApp() {
         )}
         {tab === "cards" && <CardsScreen onBack={() => setTab("home")} />}
         {tab === "ranking" && (
-          <RankingScreen profile={state.profile} ranking={state.ranking} position={state.position} />
+          <RankingScreen
+            profile={state.profile}
+            userId={state.user?.id}
+            ranking={state.ranking}
+            topPlayers={state.topPlayers}
+            myPosition={state.myPosition}
+            rankingLoaded={state.rankingLoaded}
+          />
         )}
         {tab === "profile" && (
           <ProfileScreen
