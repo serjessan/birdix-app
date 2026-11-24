@@ -904,6 +904,30 @@ const LoadingLine = ({ text }) => (
    6 · SCREEN · AUTH (Welcome + Login + Register)
    --------------------------------------------------------------------------*/
 
+/* Entrada a la app (24 nov 2026): un unico momento de marca, al iniciar sesion
+   o crear cuenta. Nunca al recargar ni al navegar. Se puede tocar para
+   saltarla, y con "reducir movimiento" del sistema activado no se muestra en
+   absoluto -- no se deja parpadear, que es lo que haria la regla global de
+   index.css si la pintaramos igual. */
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+const BrandIntro = ({ onDone }) => {
+  useEffect(() => {
+    const t = setTimeout(onDone, 1180);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div
+      onClick={onDone}
+      aria-hidden="true"
+      className="birdix-intro fixed inset-0 z-[70] flex items-center justify-center bg-[#00703a]"
+    >
+      <img src="/branding/logos/birdix-isotipo-ix.png" alt="" className="birdix-intro-mark h-36 w-36 rounded-[32px]" />
+    </div>
+  );
+};
+
 const AuthScreen = ({ onLogin, onRegister }) => {
   const [mode, setMode] = useState("welcome"); // welcome | login | register
   const [form, setForm] = useState({ name: "", lastName: "", email: "", password: "", confirm: "", accept: false });
@@ -1261,6 +1285,20 @@ const HomeScreen = ({ profile, ranking, matches, onCreate, onGoCards, onGoProfil
           <p className="font-display text-[19px] text-slate-900">Estadísticas</p>
         </button>
       </div>
+
+      {/* Instagram (24 nov 2026): al final de Inicio y discreto, fuera del flujo
+          principal. Un faldón fijo arriba competiría con "Crear partida", que es
+          el único elemento de esta pantalla con resplandor de marca y la única
+          pregunta que Inicio tiene que responder. */}
+      <a
+        href="https://www.instagram.com/birdixapp/"
+        target="_blank"
+        rel="noreferrer"
+        className="block text-center pt-1 pb-1 active:opacity-60 transition-opacity"
+      >
+        <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-semibold">Estamos en Instagram</p>
+        <p className="text-[13px] font-bold text-[#00703a] mt-0.5">@birdixapp</p>
+      </a>
     </div>
   );
 };
@@ -2159,6 +2197,15 @@ const ProfileScreen = ({ profile, userId, matches, ranking, onLogout }) => {
         <LogOut size={18} strokeWidth={2.5} />
         Cerrar sesión
       </button>
+
+      <a
+        href="https://www.instagram.com/birdixapp/"
+        target="_blank"
+        rel="noreferrer"
+        className="block text-center text-[12px] font-bold text-[#00703a] pt-2 active:opacity-60"
+      >
+        @birdixapp
+      </a>
 
       <p className="text-center text-[11px] text-slate-400 pt-2">Birdix · v0.1 prototipo</p>
     </div>
@@ -3694,6 +3741,7 @@ export default function BirdixApp() {
   const [tab, setTab] = useState("home");
   const [playing, setPlaying] = useState(false);
   const [toast, setToast] = useState(null);
+  const [showIntro, setShowIntro] = useState(false);
   const [bootDone, setBootDone] = useState(false);
   const [pendingExitTab, setPendingExitTab] = useState(null);
   const [resultMatch, setResultMatch] = useState(null);
@@ -3892,6 +3940,7 @@ export default function BirdixApp() {
 
     dispatch({ type: "HYDRATE", payload: { session, user, profile, ranking: row?.points ?? state.ranking } });
     setToast("Bienvenido de vuelta");
+    if (!prefersReducedMotion()) setShowIntro(true);
     return { error: null };
   };
 
@@ -3911,6 +3960,7 @@ export default function BirdixApp() {
     const session = { userId: data.user.id, email, since: Date.now() };
     dispatch({ type: "LOGIN", payload: { session, user } });
     setToast("Cuenta creada · vamos al perfil");
+    if (!prefersReducedMotion()) setShowIntro(true);
     return { error: null };
   };
 
@@ -4028,6 +4078,7 @@ export default function BirdixApp() {
       <>
         <OnboardingStepper user={state.user} onDone={handleOnboardingDone} />
         <Toast message={toast} onDone={() => setToast(null)} />
+        {showIntro && <BrandIntro onDone={() => setShowIntro(false)} />}
       </>
     );
   }
@@ -4100,6 +4151,7 @@ export default function BirdixApp() {
   return (
     <div className="min-h-screen text-slate-900 antialiased transition-colors duration-300" style={{ background: appBackground }}>
       <Toast message={toast} onDone={() => setToast(null)} />
+      {showIntro && <BrandIntro onDone={() => setShowIntro(false)} />}
 
       <main className="mx-auto max-w-[900px] px-4 sm:px-6 pt-6 pb-32">
         {tab === "home" && (

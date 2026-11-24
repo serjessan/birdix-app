@@ -61,3 +61,29 @@
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Entrada a la app tras iniciar sesion o crear cuenta (24 nov 2026).
+   Tercer pico coreografiado, aprobado explicitamente por Sergio sobre lo que
+   fijaba DESIGN.md (solo 2: revelar carta y resultado). Mismas reglas que el
+   flip de carta: seco y con peso, sin rebote, sin brillo, sin barajar. Ocurre
+   una sola vez al entrar -- nunca al recargar ni al navegar. El velo usa el
+   verde #00703A, el mismo que el PNG del isotipo lleva pegado, asi que la
+   marca flota sin caja visible. */
+@keyframes birdix-intro-build {
+  0% { opacity: 0; transform: scale(0.88); clip-path: inset(46% 0 46% 0); }
+  55% { opacity: 1; transform: scale(0.97); clip-path: inset(0 0 0 0); }
+  100% { opacity: 1; transform: scale(1); clip-path: inset(0 0 0 0); }
+}
+
+@keyframes birdix-intro-exit {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.birdix-intro {
+  animation: birdix-intro-exit 260ms ease-in 900ms forwards;
+}
+
+.birdix-intro-mark {
+  animation: birdix-intro-build 760ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
